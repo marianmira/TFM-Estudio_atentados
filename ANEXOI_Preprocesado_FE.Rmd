@@ -1,0 +1,1793 @@
+---
+title: "TFM - Anexo I.- Fase de Prepocesado y Feature Engineering"
+author: "Mª Antonia Mira Paz"
+date: "8/22/2021"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: yes
+    toc_float: yes
+    code_folding: show
+    number_sections: true
+  epuRate::epurate:
+    toc: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+    number_sections: true
+    latex_engine: xelatex
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+***
+
+\newpage
+
+# Análisis descriptivo de los datos
+
+Para obtener modelos más precisos es muy importante depurar las variables predictoras. Así que en esta primera fase , estudiaremos la naturaleza de las variables, detectaremos los datos erróneos y veremos las distribuciones de las variables.
+
+Empezaré por establecer nuestro directorio de trabajo, cargar las funciones y paquetes que vamos a utilizar.
+
+```{r}
+#Fijo nuestro directorio de trabajo
+setwd('./')
+
+#Cargo las funciones necesarias
+source("./Funciones_R.R")
+```
+
+Cargo las librerias necesarias
+
+```{r  lectura inicial, echo = TRUE, message=FALSE, warning=FALSE}
+rm(list = ls())
+install.packages("r package", repos = "http://cran.us.r-project.org")
+suppressPackageStartupMessages({
+  library(data.table)
+  library(dplyr)
+  library(caret)
+  library(scales)
+  library(ggplot2)
+  library(gridExtra)
+  library(stringi)
+  library(stringr)
+  library(dataPreparation)
+  library(knitr)
+  library(kableExtra)
+  library(ggpubr)
+  library(tictoc)
+  library(ggeasy)
+  library(lubridate)
+  library(inspectdf)
+  library(fastDummies)
+  library(e1071)
+  library(MLmetrics)
+  library(ranger)
+  library(caTools)
+  library(h2o)
+  library(questionr)
+  library(corrplot)
+  library(funModeling)
+})
+```
+
+A continuación, cargo los datos
+
+```{r}
+datIn <- as.data.frame(fread("datos_atentados.csv"), nThread = 2)
+```
+
+Realizo una primera inspección de los datos
+
+```{r}
+#Compruebo la dimensión de los datos cargados
+dim(datIn)
+#Observo los seis primeros registros de cada variable
+head(datIn)
+```
+El dataset contiene **191464 registros** y **66 variables predictoras**.
+
+En esta primera inspección, veo que **existen variables** con **espacios** en **blanco**, por lo tanto, deberemos **sustituir** los valores en blanco **por** valores **missing**, esto lo haré en el apartado de exploración de los datos. 
+
+Hay una variable que es **'eventid'**, que contiene el id de cada atentado, que **no necesitaremos**.
+
+## Limpieza de los datos cargados
+
+Limpio los datos y examino las clases del conjunto de entrada.
+
+```{r echo = TRUE, message=FALSE, warning=FALSE}
+#Separo la variable 'eventid' del resto
+datIn_noid <- datIn[,2:(ncol(datIn))]
+#Compruebo que los nombres de las columnas sean correctos, es decir, que no tengan espacios en blanco
+names(datIn_noid)
+# Hago una inspección inicial
+summary(datIn_noid)
+str(datIn_noid)
+```
+- En cuanto a la **naturaleza de las variables**, podemos observar que R ha considerado **muchas** de las **variables tipo factor**, porque así se definen en la descripción de las variables del Codebook, **como numéricas**, incluida 'success', nuestra variable objetivo. Por lo tanto, tendremos que **transformarlas** al **tipo correcto**. 
+
+- Podemos ver que hay **variables** con el **mismo nombre**, con '_txt' y sin '_txt'. Si revisamos la definición de estas variables en el 'Code Book', podemos ver que hay variables que contienen la **misma información**, éstas estan tanto en formato 'character', como en formato código. Por lo que, sólo **dejaré** en el **dataset** aquellas variables repetidas que estén **codificadas**.
+
+- Observar también que, la variable **'resolution'** está codificada como character, sin embargo, contiene la fecha en el que el incidente se resolvió si la duración del atentado fue mayor de 24 horas. Por lo que habrá que **corregir** la **clase** de la variable a **tipo 'Date'**.
+
+A continuación, **corrijo el tipo de las variables** comentadas anteriormente:
+
+```{r}
+#Modifico las variables que no son numéricas al tipo correcto (factor)
+
+datIn_noid$extended <- as.factor(ifelse(datIn_noid$extended == 1, "Yes", "No"))
+
+datIn_noid$vicinity <- as.factor(ifelse(datIn_noid$vicinity == 1,"Yes", ifelse(datIn_noid$vicinity == 0, "No", "Unknown")))
+
+datIn_noid$crit1 <- as.factor(ifelse(datIn_noid$crit1 == 1, "Yes", "No"))
+
+datIn_noid$crit2 <- as.factor(ifelse(datIn_noid$crit2 == 1, "Yes", "No"))
+
+datIn_noid$crit3 <- as.factor(ifelse(datIn_noid$crit3 == 1, "Yes", "No"))
+
+datIn_noid$doubtterr <- as.factor(ifelse(datIn_noid$doubtterr == 1,"Yes", ifelse(datIn_noid$doubtterr == 0, "No", "Unknown")))
+
+datIn_noid$alternative <- as.factor(ifelse(datIn_noid$alternative == 1,"Insurgency/Guerilla Action", ifelse(datIn_noid$alternative == 2, "Other Crime Type", ifelse(datIn_noid$alternative == 3, "Inter/Intra-Group Conflict", ifelse(datIn_noid$alternative == 4, "Lack of Intentionality","State Actors")))))
+
+datIn_noid$multiple <- as.factor(ifelse(datIn_noid$multiple == 1, "Yes", "No"))
+
+datIn_noid$success <- as.factor(ifelse(datIn_noid$success == 1, "Yes", "No"))
+
+datIn_noid$suicide <- as.factor(ifelse(datIn_noid$suicide == 1, "Yes", "No"))
+
+datIn_noid$attacktype1 <- as.factor(ifelse(datIn_noid$attacktype1 == 1,"ASSASSINATION", ifelse(datIn_noid$attacktype1 == 2, "ARMED ASSAULT", ifelse(datIn_noid$attacktype1 == 3, "BOMBING/EXPLOSION", ifelse(datIn_noid$attacktype1 == 4, "HIJACKING",
+ifelse(datIn_noid$attacktype1 == 5, "HOSTAGE TAKING (BARRICADE INCIDENT)",
+ifelse(datIn_noid$attacktype1 == 6, "HOSTAGE TAKING (KIDNAPPING)",       
+ifelse(datIn_noid$attacktype1 == 7, "FACILITY / INFRASTRUCTURE ATTACK",   ifelse(datIn_noid$attacktype1 == 8, "UNARMED ASSAULT","Unknown")))))))))
+
+datIn_noid$attacktype2 <- as.factor(ifelse(datIn_noid$attacktype2 == 1,"ASSASSINATION", ifelse(datIn_noid$attacktype2 == 2, "ARMED ASSAULT", ifelse(datIn_noid$attacktype2 == 3, "BOMBING/EXPLOSION", ifelse(datIn_noid$attacktype2 == 4, "HIJACKING",
+ifelse(datIn_noid$attacktype2 == 5, "HOSTAGE TAKING (BARRICADE INCIDENT)",
+ifelse(datIn_noid$attacktype2 == 6, "HOSTAGE TAKING (KIDNAPPING)",       
+ifelse(datIn_noid$attacktype2 == 7, "FACILITY / INFRASTRUCTURE ATTACK",   ifelse(datIn_noid$attacktype2 == 8, "UNARMED ASSAULT","Unknown")))))))))
+
+datIn_noid$attacktype3 <- as.factor(ifelse(datIn_noid$attacktype3 == 1,"ASSASSINATION", ifelse(datIn_noid$attacktype3 == 2, "ARMED ASSAULT", ifelse(datIn_noid$attacktype3 == 3, "BOMBING/EXPLOSION", ifelse(datIn_noid$attacktype3 == 4, "HIJACKING",
+ifelse(datIn_noid$attacktype3 == 5, "HOSTAGE TAKING (BARRICADE INCIDENT)",
+ifelse(datIn_noid$attacktype3 == 6, "HOSTAGE TAKING (KIDNAPPING)",       
+ifelse(datIn_noid$attacktype3 == 7, "FACILITY / INFRASTRUCTURE ATTACK",   ifelse(datIn_noid$attacktype3 == 8, "UNARMED ASSAULT","Unknown")))))))))
+
+datIn_noid$targtype1 <- as.factor(
+ifelse(datIn_noid$targtype1 == 1,"BUSINESS", 
+ifelse(datIn_noid$targtype1 == 2, "GOVERNMENT (GENERAL)", ifelse(datIn_noid$targtype1 == 3, "POLICE", 
+ifelse(datIn_noid$targtype1 == 4, "MILITARY",
+ifelse(datIn_noid$targtype1 == 5, "ABORTION RELATED",
+ifelse(datIn_noid$targtype1 == 6, "AIRPORTS",       
+ifelse(datIn_noid$targtype1 == 7, "GOVERNMENT (DIPLOMATIC)",
+ifelse(datIn_noid$targtype1 == 8, "EDUCATIONAL INSTITUTION",
+ifelse(datIn_noid$targtype1 == 9, "FOOD OR WATER SUPPLY",    ifelse(datIn_noid$targtype1 == 10, "JOURNALISTS",   
+ifelse(datIn_noid$targtype1 == 11, "MARITIME",  
+ifelse(datIn_noid$targtype1 == 12, "NGO",   
+ifelse(datIn_noid$targtype1 == 13, "OTHER",
+ifelse(datIn_noid$targtype1 == 14, "PRIVATE CITIZENS & PROPERTY",   
+ifelse(datIn_noid$targtype1 == 15, "RELIGIOUS FIGURES",  ifelse(datIn_noid$targtype1 == 16, "TELECOMMUNICATION",
+ifelse(datIn_noid$targtype1 == 17, "TERRORISTS/NON-STATE MILITIAS",  ifelse(datIn_noid$targtype1 == 18, "TOURISTS",  
+ifelse(datIn_noid$targtype1 == 19, "TRANSPORTATION",  ifelse(datIn_noid$targtype1 == 20, "Unknown",  
+ifelse(datIn_noid$targtype1 == 21, "UTILITIES","VIOLENT POLITICAL PARTIES"))))))))))))))))))))))
+
+datIn_noid$individual <- as.factor(ifelse(datIn_noid$individual == 1, "Yes", "No"))
+
+datIn_noid$claimed <- as.factor(ifelse(datIn_noid$vicinity == 1,"Yes", ifelse(datIn_noid$vicinity == 0, "No", "Unknown")))
+
+datIn_noid$claimmode <- as.factor(
+ifelse(datIn_noid$claimmode == 1,"Letter", 
+ifelse(datIn_noid$claimmode == 2, "Call (post-incident)", ifelse(datIn_noid$claimmode == 3, "Call (pre-incident)", 
+ifelse(datIn_noid$claimmode == 4, "E-mail",
+ifelse(datIn_noid$claimmode == 5, "Note left at scene",
+ifelse(datIn_noid$claimmode == 6, "Video",       
+ifelse(datIn_noid$claimmode == 7, "Posted to website, blog, social media",
+ifelse(datIn_noid$claimmode == 8, "Personal claim",
+ifelse(datIn_noid$claimmode == 9, "Other","Unknown"))))))))))
+
+datIn_noid$compclaim <- as.factor(ifelse(datIn_noid$compclaim == 1,"Yes", ifelse(datIn_noid$compclaim == 0, "No", "Unknown")))
+
+datIn_noid$weaptype1 <- as.factor(
+ifelse(datIn_noid$weaptype1 == 1,"Biological", 
+ifelse(datIn_noid$weaptype1 == 2, "Chemical", 
+ifelse(datIn_noid$weaptype1 == 3, "Radiological", 
+ifelse(datIn_noid$weaptype1 == 4, "Nuclear",
+ifelse(datIn_noid$weaptype1 == 5, "Firearms",
+ifelse(datIn_noid$weaptype1 == 6, "Explosives",       
+ifelse(datIn_noid$weaptype1 == 7, "Fake Weapons",
+ifelse(datIn_noid$weaptype1 == 8, "Incendiary",
+ifelse(datIn_noid$weaptype1 == 9, "Melee",    
+ifelse(datIn_noid$weaptype1 == 10, "Vehicle",   
+ifelse(datIn_noid$weaptype1 == 11, "Sabotage Equipment",  
+ifelse(datIn_noid$weaptype1 == 12, "Other","Unknown")))))))))))))
+
+datIn_noid$property <- as.factor(ifelse(datIn_noid$property == 1,"Yes", ifelse(datIn_noid$property == 0, "No", "Unknown")))
+
+datIn_noid$propextent <- as.factor(
+ifelse(datIn_noid$propextent == 1,"Catastrophic (likely ≥ $1 billion)", 
+ifelse(datIn_noid$propextent == 2, "Major (likely ≥ $1 million but < $1 billion)", 
+ifelse(datIn_noid$propextent == 3, "Minor (likely < $1 million)","Unknown"))))
+
+datIn_noid$ishostkid <- as.factor(ifelse(datIn_noid$ishostkid == 1,"Yes", ifelse(datIn_noid$ishostkid == 0, "No", "Unknown")))
+
+datIn_noid$ransom <- as.factor(ifelse(datIn_noid$ransom == 1,"Yes", ifelse(datIn_noid$ransom == 0, "No", "Unknown")))
+
+datIn_noid$hostkidoutcome <- as.factor(
+ifelse(datIn_noid$hostkidoutcome == 1,"Attempted Rescue", 
+ifelse(datIn_noid$hostkidoutcome == 2, "Hostage(s) released by perpetrators", 
+ifelse(datIn_noid$hostkidoutcome == 3, "Hostage(s) escaped", 
+ifelse(datIn_noid$hostkidoutcome == 4, "Hostage(s) killed",
+ifelse(datIn_noid$hostkidoutcome == 5, "Successful Rescue",
+ifelse(datIn_noid$hostkidoutcome == 6, "Combination","Unknown")))))))
+
+datIn_noid$INT_LOG <- as.factor(ifelse(datIn_noid$INT_LOG == 1,"Yes", ifelse(datIn_noid$INT_LOG == 0, "No", "Unknown")))
+
+datIn_noid$INT_IDEO <- as.factor(ifelse(datIn_noid$INT_IDEO == 1,"Yes", ifelse(datIn_noid$INT_IDEO == 0, "No", "Unknown")))
+
+datIn_noid$INT_MISC <- as.factor(ifelse(datIn_noid$INT_MISC == 1,"Yes", ifelse(datIn_noid$INT_MISC == 0, "No", "Unknown")))
+
+datIn_noid$INT_ANY <- as.factor(ifelse(datIn_noid$INT_ANY == 1,"Yes", ifelse(datIn_noid$INT_ANY == 0, "No", "Unknown")))
+
+#Transformo la variable 'resolution' como Date
+datIn_noid$fe_resolution <- mdy(datIn_noid$resolution)
+#Quito la variable original 'resolution'
+datIn_noid$resolution <- NULL
+
+#Copio los datos
+datIn_noid_notxt <- copy(datIn_noid) 
+#Elimino del dataset copiado las variables terminadas en _txt
+datIn_noid_notxt$country_txt <- NULL
+datIn_noid_notxt$region_txt <- NULL
+datIn_noid_notxt$alternative_txt <- NULL
+datIn_noid_notxt$attacktype1_txt <- NULL
+datIn_noid_notxt$attacktype2_txt <- NULL
+datIn_noid_notxt$attacktype3_txt <- NULL
+datIn_noid_notxt$targtype1_txt <- NULL
+datIn_noid_notxt$natlty1_txt <- NULL
+datIn_noid_notxt$claimmode_txt <- NULL
+datIn_noid_notxt$weaptype1_txt <- NULL
+datIn_noid_notxt$propextent_txt <- NULL
+datIn_noid_notxt$hostkidoutcome_txt <- NULL
+```
+
+Comprobamos si los cambios que hemos hecho en cuanto a la naturaleza de las variables se han realizado correctamente.
+
+```{r}
+#Obtenemos de nuevo la estructura de los datos 
+str(datIn_noid_notxt)
+```
+Podemos comprobar que los **cambios** en los **tipos** de las variables se han modificado **correctamente**.
+
+## Exploración de los datos
+
+**Valores en blanco**
+
+Antes de comenzar a explorar los datos, pude comprobar en la inspección inicial la existencia de valores en blanco en algunas variables, por lo tanto, antes de continuar, sustituiré los **espacios en blanco** de las variables **por valores missings**.
+
+```{r}
+datIn_noid_notxt[datIn_noid_notxt==""] <- NA
+```
+
+Compruebo que **no** existen **valores** en **blanco**.
+
+```{r}
+head(datIn_noid_notxt)
+#Guardo los datos para utlizarlos en el documento final
+datos_final <- copy(datIn_noid_notxt)
+fwrite(datos_final, 'datos_final.csv')
+```
+Puedo verificar que en variables, como **'kidhijcountry'** o **'alternative'**, antes había espacios en blanco y ahora aparecen como **'NA'**. 
+
+### Exploración de los niveles en las variables categóricas
+
+```{r}
+#categorical plot
+x <- inspect_cat(datIn_noid_notxt)
+show_plot(x)
+```
+
+En el gráfico de frecuencias de las variables categóricas podemos ver variables con un gran número de categorías. Y variables cuyos niveles se podrían agrupar.
+
+Las variables con un **gran número de categorías**, que no aportarían información relevante al modelo y los algortimos podrían perderse, por lo tanto, son **variables candidatas a eliminarse** del dataset:
+
+-  **'city'**
+
+- **'fe_resolution'**
+
+- **'kidhijcountry'**: además esta variable tiene un gran número de valores perdidos.
+
+**Variables** con muchos **niveles**, pero que se podrían **agrupar**:
+
+- **targtype1**
+
+- **weaptype1**
+
+**Variable** con una **única categoría** y que, por lo tanto, se **elminaría** del dataset, ya que, no sería discriminante: 
+
+- **''claimed''**
+
+También podemos observar que existen **variables** con un **gran número de valores perdidos** (zona grisácea en el reparto de las categorías),que analizaré más adelante.
+
+
+**A).- Variables con casos 'Unknown' Codificados**
+
+A continuación , voy a analizar las distribucción de las variables categóricas que no serán eliminadas del dataset y además tienen codificadas en sus categorías el nivel 'Unkonwn'. Con el **objetivo** de saber si **imputar** a **missing o no**, la categoría **'Unknown'**.
+
+```{r}
+#Resumen valores faltantes, ceros y valores únicos
+var_categoricas_unknown <- datIn_noid_notxt[c(19, 14, 52, 50, 49, 51, 38, 35, 22, 10, 30)]
+df_status(var_categoricas_unknown )
+```
+Puedo ver en la tabla que la única **variable** que tiene **valores perdidos** es **'ihostkid'**, esta incidencia es bastante baja (**9%**), por lo tanto, si decidimos imputar a missing los casos 'Unknown' de esta variable, se podría hacer, ya que, la incidencia de valores missing que quedará en total en la variable será muy baja.
+
+```{r}
+#Gráfico de barras de attacktype1
+ggplot(datIn_noid_notxt, aes(attacktype1, decreasing = TRUE), fill=Color) +
+  geom_bar(position = "dodge", fill = "mediumpurple") +           
+  labs(title = "Histograma attacktype1",
+       x =  "attacktype1",
+       y = "Count") +
+  coord_flip() + theme(plot.subtitle = element_text(vjust = 1), 
+    plot.caption = element_text(vjust = 1), 
+    panel.background = element_rect(fill = "lightsteelblue2", 
+        colour = "royalblue", size = 1.6, 
+        linetype = "longdash"), plot.background = element_rect(fill = "antiquewhite1", 
+        colour = "royalblue", linetype = "dotted")) + 
+  geom_text(stat = "count", 
+            aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            position = "stack",
+            vjust = 2,
+            size = 2,
+            color = "black")
+```
+
+Observamos que para la variable **'attacktype1'**, el porcentaje de valores 'Unknown' es bajo, un 4%. Paso **a missing** los casos **'Unknown'**.
+
+```{r}
+#Gráfico de barras de doubterr
+ggplot(datIn_noid_notxt, aes(doubtterr, decreasing = TRUE), fill=Color,size=0.01) +
+  geom_bar(position = "dodge", fill = "mediumpurple") +           
+  labs(title = "Histograma doubtterr",
+       x =  "doubterr",
+       y = "Count") +
+  coord_flip() + theme(plot.subtitle = element_text(vjust = 1), 
+    plot.caption = element_text(vjust = 1), 
+    panel.background = element_rect(fill = "lightsteelblue2", 
+        colour = "royalblue", size = 1.6, 
+        linetype = "longdash"), plot.background = element_rect(fill = "antiquewhite1", 
+        colour = "royalblue", linetype = "dotted")) + 
+  geom_text(stat = "count", 
+            aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            position = "stack",
+            vjust = 2,
+            size = 2,
+            color = "black")
+```
+
+**'Doubterr'** tiene un **7%** de valores **desconocidos**, por lo tanto, los imputo **a missing**.
+
+```{r}
+#Gráfico de barras de INT_ANY
+ggplot(datIn_noid_notxt, aes(INT_ANY, decreasing = TRUE), fill=Color,size=0.01) +
+  geom_bar(position = "dodge", fill = "mediumpurple") +           
+  labs(title = "Histograma INT_ANY",
+       x =  "INT_ANY",
+       y = "Count") +
+  coord_flip() + theme(plot.subtitle = element_text(vjust = 1), 
+    plot.caption = element_text(vjust = 1), 
+    panel.background = element_rect(fill = "lightsteelblue2", 
+        colour = "royalblue", size = 1.6, 
+        linetype = "longdash"), plot.background = element_rect(fill = "antiquewhite1", 
+        colour = "royalblue", linetype = "dotted")) + 
+  geom_text(stat = "count", 
+            aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            position = "stack",
+            vjust = 2,
+            size = 2,
+            color = "black")
+```
+
+Podemos observar que **'int_any'** tiene un **46%** de valores **'Unknown'**, este porcentaje es bastante grande, lo que, consideraré en caso a 'Unknown' como **una categoría más**.
+
+```{r}
+#Gráfico de barras de INT_IDEO
+ggplot(datIn_noid_notxt, aes(INT_IDEO, decreasing = TRUE), fill=Color,size=0.01) +
+  geom_bar(position = "dodge", fill = "mediumpurple") +           
+  labs(title = "Histograma INT_IDEO",
+       x =  "INT_IDEO",
+       y = "Count") +
+  coord_flip() + theme(plot.subtitle = element_text(vjust = 1), 
+    plot.caption = element_text(vjust = 1), 
+    panel.background = element_rect(fill = "lightsteelblue2", 
+        colour = "royalblue", size = 1.6, 
+        linetype = "longdash"), plot.background = element_rect(fill = "antiquewhite1", 
+        colour = "royalblue", linetype = "dotted")) + 
+  geom_text(stat = "count", 
+            aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            position = "stack",
+            vjust = 2,
+            size = 2,
+            color = "black")
+```
+
+**'Int_ideo'** tiene un **51%** de valores **'Unknown'**, este porcentaje es bastante grande, lo que, consideraré en caso a 'Unknown' como **una categoría más**.
+
+```{r}
+#Gráfico de barras de INT_LOG
+ggplot(datIn_noid_notxt, aes(INT_LOG, decreasing = TRUE), fill=Color,size=0.01) +
+  geom_bar(position = "dodge", fill = "mediumpurple") +           
+  labs(title = "Histograma INT_LOG",
+       x =  "INT_LOG",
+       y = "Count") +
+  coord_flip() + theme(plot.subtitle = element_text(vjust = 1), 
+    plot.caption = element_text(vjust = 1), 
+    panel.background = element_rect(fill = "lightsteelblue2", 
+        colour = "royalblue", size = 1.6, 
+        linetype = "longdash"), plot.background = element_rect(fill = "antiquewhite1", 
+        colour = "royalblue", linetype = "dotted")) + 
+  geom_text(stat = "count", 
+            aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            position = "stack",
+            vjust = 2,
+            size = 2,
+            color = "black")
+```
+
+Al igual que en el caso anterior, **'Int_log'** tiene un **51%** de valores **'Unknown'**, este porcentaje es bastante grande, lo que, consideraré en caso a 'Unknown' como **una categoría más**.
+
+```{r}
+#Gráfico de barras de INT_MISC
+ggplot(datIn_noid_notxt, aes(INT_MISC, decreasing = TRUE), fill=Color,size=0.01) +
+  geom_bar(position = "dodge", fill = "mediumpurple") +           
+  labs(title = "Histograma INT_MISC",
+       x =  "INT_MISC",
+       y = "Count") +
+  coord_flip() + theme(plot.subtitle = element_text(vjust = 1), 
+    plot.caption = element_text(vjust = 1), 
+    panel.background = element_rect(fill = "lightsteelblue2", 
+        colour = "royalblue", size = 1.6, 
+        linetype = "longdash"), plot.background = element_rect(fill = "antiquewhite1", 
+        colour = "royalblue", linetype = "dotted")) + 
+  geom_text(stat = "count", 
+            aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            position = "stack",
+            vjust = 2,
+            size = 2,
+            color = "black")
+```
+
+**'Int_misc'** tiene una **incidencia muy baja** de casos **'Unknown'**, por lo tanto, imputaré estos casos **a missing**.
+
+```{r}
+#Gráfico de barras de ishostkid
+ggplot(datIn_noid_notxt, aes(ishostkid, decreasing = TRUE), fill=Color,size=0.01) +
+  geom_bar(position = "dodge", fill = "mediumpurple") +           
+  labs(title = "Histograma ishostkid",
+       x =  "ishostkid",
+       y = "Count") +
+  coord_flip() + theme(plot.subtitle = element_text(vjust = 1), 
+    plot.caption = element_text(vjust = 1), 
+    panel.background = element_rect(fill = "lightsteelblue2", 
+        colour = "royalblue", size = 1.6, 
+        linetype = "longdash"), plot.background = element_rect(fill = "antiquewhite1", 
+        colour = "royalblue", linetype = "dotted")) + 
+  geom_text(stat = "count", 
+            aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            position = "stack",
+            vjust = 2,
+            size = 2,
+            color = "black")
+```
+
+**'Ihostkid'** tiene un **porcentaje muy bajo** de casos **'Unknown'**, como vimos anteriormente, los casos de missing de la variable, también es muy bajo, por lo tanto, imputaré las observaciones de esta variable **a missing**.
+
+```{r}
+#Gráfico de barras de property
+ggplot(datIn_noid_notxt, aes(property, decreasing = TRUE), fill=Color,size=0.01) +
+  geom_bar(position = "dodge", fill = "mediumpurple") +           
+  labs(title = "Histograma property",
+       x =  "property",
+       y = "Count") +
+  coord_flip() + theme(plot.subtitle = element_text(vjust = 1), 
+    plot.caption = element_text(vjust = 1), 
+    panel.background = element_rect(fill = "lightsteelblue2", 
+        colour = "royalblue", size = 1.6, 
+        linetype = "longdash"), plot.background = element_rect(fill = "antiquewhite1", 
+        colour = "royalblue", linetype = "dotted")) + 
+  geom_text(stat = "count", 
+            aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            position = "stack",
+            vjust = 2,
+            size = 2,
+            color = "black")
+```
+
+**'Property'** tiene una incidencia de **'Unkonwn'** del **13%**, está por debajo del 25%, por lo que, imputaré los casos **a missing**.
+
+```{r}
+#Gráfico de barras de targtype1
+ggplot(datIn_noid_notxt, aes(targtype1, decreasing = TRUE), fill=Color,size=0.01) +
+  geom_bar(position = "dodge", fill = "mediumpurple") +           
+  labs(title = "Histograma targtype1",
+       x =  "targtype1",
+       y = "Count") +
+  coord_flip() + theme(plot.subtitle = element_text(vjust = 1), 
+    plot.caption = element_text(vjust = 1), 
+    panel.background = element_rect(fill = "lightsteelblue2", 
+        colour = "royalblue", size = 1.6, 
+        linetype = "longdash"), plot.background = element_rect(fill = "antiquewhite1", 
+        colour = "royalblue", linetype = "dotted")) + 
+  geom_text(stat = "count", 
+            aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            position = "stack",
+            vjust = 2,
+            size = 2,
+            color = "black")
+```
+
+**'Targtype1'** tiene un **3%** de casos **'Unknown'**, por lo que, imputaré los casos **a missing**.
+
+```{r}
+#Gráfico de barras de vicinity
+ggplot(datIn_noid_notxt, aes(vicinity, decreasing = TRUE), fill=Color,size=0.01) +
+  geom_bar(position = "dodge", fill = "mediumpurple") +           
+  labs(title = "Histograma vicinity",
+       x =  "vicinity",
+       y = "Count") +
+  coord_flip() + theme(plot.subtitle = element_text(vjust = 1), 
+    plot.caption = element_text(vjust = 1), 
+    panel.background = element_rect(fill = "lightsteelblue2", 
+        colour = "royalblue", size = 1.6, 
+        linetype = "longdash"), plot.background = element_rect(fill = "antiquewhite1", 
+        colour = "royalblue", linetype = "dotted")) + 
+  geom_text(stat = "count", 
+            aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            position = "stack",
+            vjust = 2,
+            size = 2,
+            color = "black")
+```
+
+**'Vicinity'** tiene un **porcentaje** de **'Unknowns' muy bajo**, por debajo del 1%, por lo que, los casos los imputaré **a missing**.
+
+```{r}
+#Gráfico de barras de weaptype1
+ggplot(datIn_noid_notxt, aes(weaptype1, decreasing = TRUE), fill=Color,size=0.01) +
+  geom_bar(position = "dodge", fill = "mediumpurple") +           
+  labs(title = "Histograma weaptype1",
+       x =  "weaptype1",
+       y = "Count") +
+  coord_flip() + theme(plot.subtitle = element_text(vjust = 1), 
+    plot.caption = element_text(vjust = 1), 
+    panel.background = element_rect(fill = "lightsteelblue2", 
+        colour = "royalblue", size = 1.6, 
+        linetype = "longdash"), plot.background = element_rect(fill = "antiquewhite1", 
+        colour = "royalblue", linetype = "dotted")) + 
+  geom_text(stat = "count", 
+            aes(label = paste(round((..count..)/sum(..count..)*100), "%")),
+            position = "stack",
+            vjust = 2,
+            size = 2,
+            color = "black")
+```
+
+**'Weaptype1'** tiene un porcentaje de **'Unknown'** del **13%**, un porcentaje bajo, por lo que, imputaré los casos **a missing**.
+
+### Nivel de desbalanceo de las variables categóricas
+
+```{r echo = TRUE, message=FALSE, warning=FALSE}
+#feature imbalance bar plot
+x <- inspect_imb(datIn_noid_notxt)
+show_plot(x)
+```
+
+Hay un cierto número de **variables** que están **desbalanceadas**, unas de sus categorías está por encima de 85%, **incluida** la **variable objetivo** 'success'.
+
+Por lo tanto, a la hora de modelizar, **parametrizaré** los **algoritmos** que voy a utilizar **para que favorezcan** a las **clases minoritarias**. 
+
+Además, en vez, de utilizar técnicas de sub/sobre muestreo, parametrizaremos estos algoritmos, para que nos **optimicen** no sólo la métrica de ‘Accuacy’ si no también **la métrica de ‘Recall’**.
+
+### Tamaño de memoria
+
+```{r echo = TRUE, message=FALSE, warning=FALSE}
+x <- inspect_mem(datIn_noid_notxt)
+#Para que muestre sólo las 15 primeras
+x_bigger <- x[1:15,]
+show_plot(x_bigger)
+```
+
+En el gráfico muestro las 15 variables que ocupan mayor espacio de memoria.
+ 
+Vemos como **'city'** es la variable que **mayor espacio ocupa** con diferencia. Esta variable será eliminada del dataset, por tener un gran número de categorías, lo cúal **no afectará** de manera significativa a la memoria.
+
+### Número de valores perdidos
+
+**Número de valores missinng por variables**
+
+```{r echo = TRUE, message=FALSE, warning=FALSE}
+x <- inspect_na(datIn_noid_notxt)
+#Muestro sólo las mayor porcentaje
+x_mayor <- filter(x, pcnt > 5.0)
+show_plot(x_mayor)
+```
+
+Muestro las variables que presentan un número de valores perdidos superior al 5%.
+
+Podemos ver que existe un **gran número de variables** con **valores perdidos**. **Eliminaré** del dataset las variables que presenten un porcentaje **mayor del 50% de datos missing**. 
+
+Estas variables son:
+
+- **ransom**
+
+- **'propextent'**
+
+- **'propvalue'**
+
+- **'alternative'**
+
+- **'claimmode'**
+
+- **'nhostkid'**
+
+- **'hostkidoutcome'**
+
+- **'nreleased'**
+
+- **'ndays'** 
+
+- **'attacktype2'**
+
+- **'compclaim'**
+
+- **'fe_resolution'**
+
+- **'nhours'**
+
+- **'kidhijcountry'**
+
+- **'ransomamt'**
+
+- **'ransompaid'**
+
+- **'attacktype3'**
+
+- **'divert'**
+
+Los **missing** del **resto de variables** los **imputaré** por el **Algoritmo MissRanger**
+
+**- Número de valores missing por observación**
+
+A continuación, miramos si existe alguna observación con más del 50% de valores perdidos.
+
+```{r}
+#Creo la variable de prop_missings por observación
+datIn_noid_notxt$prop_missings <- apply(is.na(datIn_noid_notxt), 1, mean)
+summary(datIn_noid_notxt$prop_missings)
+```
+Vemos que **existen** observaciones con un **porcentaje de missing del 49%**. Por lo tanto, **no eliminaré** ninguna **observación**.
+
+### Inspeción de las variables numéricas
+
+**- Tabla de valores faltantes, ceros y valores únicos**
+
+Con el fin de **completar** nuestro **análisis** de **variables cualitativas**, podemos utilizar la **función df_status**, incluida en funModeling. Esta función **obtiene** un cómputo de **valores missing y ceros**, de las variables, tanto en **términos absolutos**, como en términos **porcentuales**. **También** obtiene las estadísticas de los **valores únicos**.
+
+```{r echo = TRUE, message=FALSE, warning=FALSE}
+#install.packages("funModeling")
+#library(funModeling)
+#Variables numéricas
+var_numericas <- datIn_noid_notxt[c(1,2,3,5,6,8,9,23,25,26,31,32,33,34,37,39,40,41,45,46,48)]
+df_status(var_numericas)
+
+```
+A continuación, muestro un **resumen gráfico** de aquellas **variables numéricas** que **no** serán **eliminadas** del dataset, por tener un porcentaje de valores perdidos inferior al 50%.
+
+```{r}
+#Histogramas para las variables numéricas
+#Muestro los gráficos en grupos de 5 para que se vean bien
+var_numericasI <- datIn_noid_notxt[c(1,2,3,5,6)]
+x <- inspect_num(var_numericasI)
+show_plot(x)
+
+```
+
+Podemos **observar** tanto en los **gráficos** cómo en las **tablas** que:
+
+- **'Country'**: tiene una **baja incidencia** de **'Outliers'**, por lo que, imputaré estos valores por regresión (Algortimo de missRanger).
+
+- **'iday' e 'imonth'**: ambas variables tienen un **pequeño porcentaje de ceros**, los cuales cambiaré a NA, para posteriormente **imputarlos** mediante el **algoritmo 'missRanger'**.
+
+```{r}
+#Histogramas para las variables numéricas
+var_numericasII <- datIn_noid_notxt[c(8,9,23,25,26)]
+x <- inspect_num(var_numericasII)
+show_plot(x)
+
+```
+
+- **'latitude' y 'longitude'**: tienen ciertos **valores** como **'NA'**, cuyos porcentajes son menores al 50%, los **imputaré** con el algortimo **'Missranger'**. 
+
+- **'nattly1'**: tiene un **porcentaje pequeño**, tanto de **valores perdidos**, como de **outliers**, por lo que estos valores, serán imputados por regresión. 
+
+- **'nperps'**: contiene el **número de participantes** en un atentado. Este número **debe ser mayor que cero**. Si observamos la distribución de esta variable, podemos observar, que la variable tiene un **gran número** de **valores menores o iguales que cero** (un **47%**). Si además, **añadimos** a la imputación, los **valores missing** que ya tiene de por sí la variable (un **37%**), sería **imputar** un **total** del **84%** de la información de esta variable, lo cual **no es adecuado**. Por lo que, que **tramificaré** la variable en la parte de Feature Engineering. Los **valores** que son **menores que cero**, los imputaré el valor -99999 (Codificado como **'Unknwon'**). De esta manera, **no perderemos la información**. Y además, al considerar la variable como categórica, tenemos la ventaja de poder **captar relaciones no lineales** con la **variable objetivo**.
+
+- **'nperpcap'**: Considera el **número** de **terroristas detenidos**. Si observamos el gráfico, podemos ver que tiene una proporción de **ceros** considerable (**60%**), pero **posible**. También podemos ver que existen **valores menores que cero** (**1%**), y un porcentaje de **Missing del 36%**. Por su distribución totalmente asímetrica a la izquierda, es posible que como numérica no aporte variabilidad la modelo, por lo tanto, la voy a recategorizar. Tendré en cuenta **dos escenarios**, **uno** incluyendo la **variable numérica** en el dataset, y **otro**, inlcuyendo sólo la **variable recategorizada**. De esta forma, analizaré cuál de las dos variables aportan mayor información al modelo.
+
+  a) Para el **caso** de la **variable numérica**, **imputaré** por el **algoritmo      missRanger** los valores **missing** y los **valores negativos**. 
+  
+  b) Para la **variable recodificada**, al igual que para la variable numérica, los      **missing por regresión**. Y los **valores menores que cero 0 a**                  -99999(**'Unknwon'**)
+
+```{r}
+#Histogramas para las variables numéricas
+var_numericasIII <- datIn_noid_notxt[c(31,32,33,34)]
+x <- inspect_num(var_numericasIII)
+show_plot(x)
+
+```
+
+- **'nkill'**: esta variable considera el **número de muertos en un atentado**. Podemos ver tiene un **gran número de ceros** (**48%**), valores  posibles de la variable. Además, de un **5% de valores perdidos**. En esta ocasión **no hay valores negativos**. Siguiendo el **mismo patrón** de análisis **anterior**, **tramificaré** la **variable** y **analizaré alternativamente**, con la variable numérica y con la variable recodificada, el **ajuste del modelo** en todos los algoritmos que utilice.
+
+  a) Para el **caso** de la **variable numérica**, **imputaré** por el **algoritmo      missRanger** los valores **missing**. 
+  
+  b) Para la **variable recodificada**, al igual que para la variable numérica, los      **missing por regresión**.
+
+- **'nkillter'**: recoge el **número de atacantes muertos en el atentado**. Al igual que en la variable anterior, tiene un **gran número de ceros** (57%). **No** tiene **valores negativos**. Por lo que, al igual que con la variable anterior, **tramificaré** esta variable y **analizaré la posibilidad** de incluir en el modelo la **variable numérica ó la variable recategorizada**, será aquella que aporte **mayor variabilidad** al modelo.
+
+  a) Para el **caso** de la **variable numérica**, **imputaré** por el **algoritmo      missRanger** los valores **missing**. 
+    
+  b) Para la **variable recodificada**, al igual que para la variable numérica, los      **missing por regresión**.
+    
+- **'nwound'**: mide el **número de heridos total en el atentado**. Al igual que en las variables anteriores, tiene un **gran número de ceros** (56%), **valores permitidos** en esta variable. **No** tiene **valores negativos**. Además, tiene un **9%** de valores **perdidos**. Por lo tanto, al **igual** que en el **caso anterior**, **tramificaré** la variable y **estudiaré** la posibilidad de **incluir en el dataset del modelo**, la **variable numérica ó tramificada**.
+
+  a) Para el **caso** de la **variable numérica**, **imputaré** por el **algoritmo      missRanger** los valores **missing**.
+    
+  b) Para la **variable recodificada**, al igual que para la variable numérica, los      **missing por regresión**.
+
+- **'nwoundte'**: recoge el **número de terroristas heridos en el atentado**. Tiene un **62% de ceros**, **valores permitidos** en esta variable. **No** tiene **valores negativos**. Y tiene un **36% de valores perdidos**. Por lo que, al igual que en casos anteriores, **tramificaré la variable** y **analizaré** la posibilidad de **introducir** en el **modelo final** la **variable numérica** **ó** la **tramificada**, aquella que **optimice** la bondad del **ajuste**.
+
+  a) Para el **caso** de la **variable numérica**, **imputaré** por el **algoritmo      missRanger** los valores **missing**. 
+    
+  b) Para la **variable recodificada**, al igual que para la variable numérica, los      **missing por regresión**.
+
+### Outliers
+
+```{r echo = TRUE, message=FALSE, warning=FALSE}
+source("./Funciones_R.R") #Cargo el archivo de funciones necesarias para este análisis
+#Cargo la liberia necesaria
+library(psych)
+#Muestro la incidencia de outliers de las variables numéricas que no serán elimindas 
+var_numericas_entran <-datIn_noid_notxt[c(1,2,3,5,6,8,9,23,25,26,31,32,33,34)]
+out <- sapply(Filter(is.numeric, var_numericas_entran),function(x) atipicosAmissing(x)[[2]])/nrow(datIn_noid_notxt)
+out
+```
+
+Si nos centramos en las variables numéricas que entraran en el dataset a analizar, podemos observar que, las **variables** que **tienen** una **gran cantidad de valores cero**, son las variables que **tienen** una **incidencia mayor** de **outliers**. 
+
+Estas variables son: 
+
+- **'nperps'**
+
+- **'nkillter'**
+
+- **'nwound'**
+
+- **'nkill'**
+
+- **'nperpcap'**
+
+Por lo tanto, para estas variables en concreto, **no** los **eliminaré**, los dejo tal cual, **ya que** los pocos **valores** que **no son 0 ó -99** (en el caso de 'nperpcap' y 'nperps'), los **considero relevantes**.
+
+El resto de variables como, **natlty1 y country**, tienen una **incidencia** de valores atípicos, mucho **más pequeña**, por lo tanto, **estos** **outliers** serán **imputados** por el algortimo **missRanger**, dónde los valores se imputarán en función del resto de las variables.  
+
+### Análisis de las correlaciones entre las variables numéricas
+
+```{r}
+#Variables numéricas
+var_numericas <- datIn_noid_notxt[c(1,2,3,5,6,8,9,23,25,26,31,32,33,34,37,39,40,41,45,46,48)]
+#Correlaciones entre las variables numéricas
+corrplot(cor(var_numericas, use="pairwise", 
+             method="pearson"), method = "circle",type = "upper",tl.col = "black",tl.cex = 0.7)
+
+corrplot(cor(var_numericas, use="pairwise", 
+             method="pearson"), method = "number",type = "upper",tl.col = "black",number.cex = 0.5, tl.cex = 0.7)
+
+```
+
+Las variables numéricas con una **mayor correlación** son el código del pais (**'country'**) **con** la nacionalidad de la victima/objetivo (**’natlty1'**), **y** el número de atancantes muertos (**'nkillter'**) **con** el número de terrostistas heridos (**'nwoundte'**). Estas dos correlaciones se sitúan **alrededor del 60%**. **No** es una correlación muy **alta**, por lo tanto, las variables numéricas **no** deberían dar problemas de **multicolinealidad**.
+
+
+### Conclusiones del EDA
+
+Con el análisis descriptivo de los datos, he llegado a las siguientes conclusiones:
+
+1.-**Variables** que se **eliminan**, bien por tener un gran número de categorías, una sóla categoría o por tener un gran porcentaje de valores perdidos:
+
+- **'city'**
+
+- **'fe_resoution'**
+
+- **'kidhijicountry'** 
+
+- **'claimed'**
+
+- **'ransom'**
+
+- **'propextent'**
+
+- **'propvalue'**
+
+- **'alternative'**
+
+- **'claimmode'**
+
+- **'nhostkid'**
+
+- **'hostkidoutcome'**
+
+- **'nreleased'**
+
+- **'ndays'**
+
+- **'attacktype2'**
+
+- **'compclaim'**
+
+- **'nhours'**
+
+- **'ransomamt'**
+
+- **'ransompaid'**
+
+- **'attacktype3'**
+
+- **'divert'**
+
+2.- **Variables cualitativas** con casos **'Unknown'** Codificados.
+
+Hemos visto que hay **variables** con **categorías 'Unkonwn'**. Por lo que, **si** los **casos** de estas variables son importantes (por **encima del 25%**), los **consideraré como una categoría más**, por el contrario, **si** este porcentaje está por **debajo** del **25%**, imputaré estos casos **a missing**.
+
+Los casos **'Unknown'** de las variables que irán imputados **a missing** son:
+
+- **'attacktype1'**
+
+- **'doubterr'**
+
+- **'INT_MISC'**
+
+- **'ishostkid'**
+
+- **'property'**
+
+- **'targtype1'**
+
+- **'vicinity'**
+
+- **'weaptype1'**
+
+**Variables** con **'Unknown' como una categoría** más:
+
+- **'INT_ANY'**
+
+- **'INT_IDEO'**
+
+- **'INT_LOG'**
+
+3.- Tratamiento de **Outliers**
+
+- **'country' y 'nattly1**: ambas variables tienen una **baja incidencia** de Outliers, por lo tanto, esos valores los pasaré **a missing** y posteriormente los imputaré por regresión con el algoritmo missRanger.
+
+- El resto de **variables** **con** incidencia de outliers, es debido a la **gran cantidad de valores cero o valores negativos** que tienen, por lo tanto, **no** los **eliminaré**, **ni** los **imputaré** ya que los pocos **valores** que no son cero ó negativos los considero **relevantes**. 
+
+4.- **Tratamiento** de los **ceros** en las variables **'imonth'** y **'iyear'**
+
+Ambas variables tienen un **pequeño porcentaje de ceros**, los cuales cambiaré a **NA**, para posteriormente imputarlos mediante el **algoritmo ‘missRanger’**.
+
+
+5.- **Valores perdidos**.
+
+Los valores perdidos de las variables serán **imputados** por el algoritmo **missRanger**.
+
+6.- **Recategorización** de variables numéricas.
+
+**Variables** que, por sus distribucciones totalmente asimétricas a la izquierda, **como númericas** tendrían **poco que aportar**, las voy a **recategorizar** para **no perder información** y poder captar así relaciones no lineales con la variable objetivo.
+
+Excepto **para** la variable **'nperps'**, que **sólo** mantendré en el dataset, la variable **recategorizada**, para el **resto** de las variables especificadas abajo, tendré en cuenta **dos situaciones**, **una**, **incluyendo** en el conjunto de datos sólo la variable **numérica**, y **otra**, incluyendo sólo la variable **recategorizada**. Analizando así la bondad del ajuste en cada una de las situaciones.
+
+Estas variables son:
+
+- **'nperps'**: **sólo** tendré en cuenta la **variable recategorizada**. Esta variable como vimos, tiene un gran número de **valores menores o iguales a cero**, que imputaré al valor **-99999** ('Unknown').
+
+- **'nperpcap'**: en este caso, al tener **valores negativos** los imputaré, en el caso de la variable numérica a missing, y en el caso de la variable recategorizada a -99999 ('Unknown'). 
+
+- **'nkill'**, **'nkillter'**, **'nwound'** y **'nwoundte'**: **no** tienen valores **negativos**, por lo que los **missing** tanto de la variable **numérica**, como de la variable **recategorizada** se imputarán por **missRanger**.
+
+7.-**Unión de niveles** en variables categóricas.
+
+Variables que tienen **niveles** con un porcentaje menor del 5% de los casos, es decir, niveles **pocos representativos**, los agruparé:
+
+- **'targtype1'**
+
+- **'weaptype1'**
+
+8.-**Creación** de **nuevas** variables
+
+Incluiré en el dataset tres nuevas variables, que creo que pueden ser interesantes:
+
+- **'distancia'**: medirá la distancia entre la longitud y la latitud.
+
+- **'trimestre'**: agrupará la información por trimestres.
+
+- **'quincena'**: computará los dias de los meses por quincenas.
+
+**Al igual** que con las variables recategorizadas, mencionadas en el **punto anterior**, estas tres variables las **analizaré** en **dos escenarios diferentes**. **Uno**, creando un dataset dónde se incluyan las **variables numéricas originales**, y **otro**, incluyendo en el conjunto de datos las **nuevas variables** categorizadas. 
+
+9.-Existencia de **variables desbalanceadas**.
+
+Debido a la existencia de variables desbalanceadas, habrá que **parametrizar** los **algoritmos** para que **favorezacan** a las **clases minoritarias**. A su vez, parametrizaré estos algortimos para **optimizar** no sólo el 'Accuracy' si no también **la mértica 'Recall'**.
+
+10.-**Multicolinealidad** entre variables.
+
+Estudiando las correlaciones entre las variables numéricas, pude comprobar que **no** existían **correlaciones altas** entre ellas (aproximadamente **60%**), por lo que, **no** existirán problemas de **multicolinealidad**.
+
+Todos estos cambios los realizaré en la fase de Feature Engineering
+
+***
+
+# Feature Engineering
+
+En esta fase implementaré los cambios anunciados en el apartado anterior y también crearé nuevas variables cuyo cambio considero que puede ser interesante.
+
+**Antes** de empezar a hacer las transformaciones necesarias voy a generar un archivo input, que contendrá sólo las variables predictoras. Ya que las **transformaciones** que hagamos en cuanto a los **datos anómalos** y **perdidos**, sólo se deben hacer **sin** tener en cuenta la **variable objetivo**.
+
+```{r}
+#Copio los datos a modelizar
+datMod <- copy(datIn_noid_notxt) 
+```
+
+```{r}
+#Indico la variable objetivo y el input con las variables predictoras
+varObj<-datMod$success
+input<-as.data.frame(datMod[,c(1:16,18:54)])
+```
+
+**-Eliminación de las variables**
+
+```{r}
+#Elimino las variables que no entraran en el modelo
+input$city <- NULL
+input$fe_resolution <- NULL
+input$kidhijcountry <- NULL
+input$claimed <- NULL
+input$ransom <- NULL
+input$propextent <- NULL
+input$propvalue <- NULL
+input$alternative <- NULL
+input$claimmode <- NULL
+input$nhostkid <- NULL
+input$hostkidoutcome <- NULL
+input$nreleased<- NULL
+input$ndays <- NULL
+input$attacktype2 <- NULL
+input$compclaim <- NULL
+input$nhours <- NULL
+input$ransomamt <- NULL
+input$ransompaid <- NULL
+input$attacktype3 <- NULL
+input$divert <- NULL
+input$prop_missings <- NULL
+
+#Compruebo que se han eliminado dichas variables
+names(input)
+```
+**- Transformación en las variables cualitativas de los casos 'Unknown' a missing**
+
+```{r}
+#Copio la variable
+input$fe_attacktype1 <- input$attacktype1
+#Transformo 'Unknown' por NA
+input$fe_attacktype1 <- recode.na(input$fe_attacktype1, "Unknown")
+#Elimino la variable original
+input$attacktype1 <- NULL
+
+#Copio la variable
+input$fe_doubtterr <- input$doubtterr
+#Transformo 'Unknown' por NA
+input$fe_doubtterr <- recode.na(input$fe_doubtterr, "Unknown")
+#Elimino la variable original
+input$doubtterr <- NULL
+
+#Copio la variable
+input$fe_INT_MISC <- input$INT_MISC
+#Transformo 'Unknown' por NA
+input$fe_INT_MISC <- recode.na(input$fe_INT_MISC, "Unknown")
+#Elimino la variable original
+input$INT_MISC <- NULL
+
+#Copio la variable
+input$fe_ishostkid <- input$ishostkid
+#Transformo 'Unknown' por NA
+input$fe_ishostkid <- recode.na(input$fe_ishostkid, "Unknown")
+#Elimino la variable original
+input$ishostkid <- NULL
+
+#Copio la variable
+input$fe_property <- input$property
+#Transformo 'Unknown' por NA
+input$fe_property <- recode.na(input$fe_property, "Unknown")
+#Elimino la variable original
+input$property <- NULL
+
+#Copio la variable
+input$fe_targtype1 <- input$targtype1
+#Transformo 'Unknown' por NA
+input$fe_targtype1 <- recode.na(input$fe_targtype1, "Unknown")
+#Elimino la variable original
+input$targtype1 <- NULL
+
+#Copio la variable
+input$fe_vicinity <- input$vicinity
+#Transformo 'Unknown' por NA
+input$fe_vicinity <- recode.na(input$fe_vicinity, "Unknown")
+#Elimino la variable original
+input$vicinity <- NULL
+
+#Copio la variable
+input$fe_weaptype1 <- input$weaptype1
+#Transformo 'Unknown' por NA
+input$fe_weaptype1 <- recode.na(input$fe_weaptype1, "Unknown")
+#Elimino la variable original
+input$weaptype1 <- NULL
+
+```
+
+**- Transformación de los valores menores de cero en nperpcap a missing**
+
+```{r}
+#Transformación de los valores menores de cero nperpcap a missing
+input$fe_nperpcap <- ifelse(input$nperpcap < 0, NA, input$nperpcap)
+
+#Elimimo la variable antigua
+input$nperpcap <- NULL
+```
+
+**- Tratamiento de los valores Outliers**
+
+```{r}
+#Transformo a missing los outliers de las variables 'country' y 'nattly1'
+t<-data.frame(sort(
+  round(sapply(Filter(
+    is.numeric, input),function(nOut) atipicosAmissing(
+      nOut)[[2]])/nrow(input)*100,3), decreasing = T))
+
+a<-rownames(t)[t[,1]<1]
+input[as.vector(a[c(1,2)])]<-sapply(input[as.vector(a[c(1,2)])], function(x) atipicosAmissing(x)[[1]])
+```
+
+
+```{r}
+#Comprobación
+var_numericas_entran_input <-input[c(1,2,3,5,6,7,8,14, 16, 32, 17, 18, 19,20)]
+df_status(var_numericas_entran_input)
+```
+
+Podemos comprobar como el **porcentaje de missing** de 'country' y 'natlty1' ha cambiado, el porcentaje de **'country'** a pasado de **0% a 0.25%**. Y el de **'natlty1'** de **0.90% a 1.20%** 
+
+**- Transformación de los valores cero en 'imonth' e 'iday'**
+
+```{r}
+#Imputo los valores cero de las dos variables a NA
+input$fe_imonth <- ifelse(input$imonth == 0, NA, input$imonth)
+input$fe_iday <- ifelse(input$iday == 0, NA, input$iday)
+#Elimimo las variables antiguas
+input$imonth <- NULL
+input$iday <- NULL
+```
+
+
+**- Imputación de los missing**
+
+```{r echo = TRUE, message=FALSE, warning=FALSE}
+#Imputación con MissRanger
+install.packages('missRanger', repos = "http://cran.us.r-project.org")
+library(missRanger)
+input <- missRanger(input, pmm.k = 3, num.trees = 100)
+head(input)
+```
+
+Podemos comprobar como los datos que antes era NA, ahora se han sustituido por su valor predicho, teniendo en cuenta el resto de variables para dicha estimación.
+
+**-Recategorización de las variables numéricas**
+
+A continuación, recategorizo las siguientes variables continuas: 'nperps', 'nperpcap', 'nkill', 'nkillter', 'nwound'y 'nwoundte', con el fin de mejorar su aportación en el modelo.
+
+```{r}
+#Transformo a categóricas las siguiente variables numéricas.
+#Primero observo la distribución de la variable
+#questionr::freq(input$nperps,sort = "dec")
+
+##################nperps################################
+#Codifico los valores menores o iguales a cero como -99999
+input$fe_nperps_tram<-factor(replace(input$nperps, which(input$nperps<=0), -99999))
+input$fe_nperps_tram<-replace(input$fe_nperps_tram, which(input$nperps>4), 4)
+#Junto las categorias poco representadas de fe_nperps_tram
+input$fe_nperps_tram <- car::recode(input$fe_nperps_tram, "c(-99999) = 'Unknown';c(1) = '1';c(2) = '2';c(3) = '3';c(4) = 'Más de 4'", as.factor = T)
+
+#Elimino la variable original
+input$nperps <- NULL
+
+#questionr::freq(input$fe_nperps_tram,sort = "dec")
+#table(input$fe_nperps_tram, varObj)
+###############nperpcap##########################
+input$fe_nperpcap_tram<-factor(replace(input$fe_nperpcap, which(input$fe_nperpcap>3), 3))
+#Junto las categorias poco representadas de fe_nperpcap_tram
+input$fe_nperpcap_tram <- car::recode(input$fe_nperpcap_tram, "c(0) = '0';c(1) = '1';c(2,2.5) = '2';c(3) = 'Más de 3'", as.factor = T)
+
+#questionr::freq(input$fe_nperpcap_tram,sort = "dec")
+#table(input$fe_nperpcap_tram, varObj)
+
+###############nkill##########################
+#questionr::freq(datMod$nkill,sort = "dec")
+input$fe_nkill_tram <- as.factor(input$nkill)
+input$fe_nkill_tram<-replace(input$fe_nkill_tram, which(input$nkill>3), 3)
+#Junto las categorias poco representadas de fe_nkill_tram
+input$fe_nkill_tram <- car::recode(input$fe_nkill_tram, "c(0) = '0';c(1) = '1';c(2) = '2';c(3) = 'Más de 2'", as.factor = T)
+
+###############nkillter##########################
+#questionr::freq(datMod$nkillter,sort = "dec")
+input$fe_nkillter_tram <- as.factor(input$nkillter)
+input$fe_nkillter_tram<-replace(input$fe_nkillter_tram, which(input$nkillter>2), 2)
+#Junto las categorias poco representadas de fe_nkillter_tram
+input$fe_nkillter_tram <- car::recode(input$fe_nkillter_tram, "c(0) = '0';c(1) = '1';c(2) = 'Más de 1'", as.factor = T)
+
+###############nwound##########################
+#questionr::freq(datMod$nwound,sort = "dec")
+input$fe_nwound_tram <- as.factor(input$nwound)
+input$fe_nwound_tram<-replace(input$fe_nwound_tram, which(input$nwound>3), 3)
+#Junto las categorias poco representadas de fe_nwound_tram
+input$fe_nwound_tram <- car::recode(input$fe_nwound_tram, "c(0) = '0';c(1) = '1';c(2) = '2';c(3) = 'Más de 3'", as.factor = T)
+
+###############nwoundte##########################
+#questionr::freq(datMod$nwoundte,sort = "dec")
+input$fe_nwoundte_tram <- as.factor(input$nwoundte)
+input$fe_nwoundte_tram<-replace(input$fe_nwoundte_tram, which(input$nwoundte>1), 1)
+#Junto las categorias poco representadas de fe_nwoundte_tram
+input$fe_nwoundte_tram <- car::recode(input$fe_nwoundte_tram, "c(0) = '0';c(1) = 'Más de cero'", as.factor = T)
+```
+
+**- Transformación de las variables categóricas a menos niveles** 
+
+```{r}
+####################Unión de los niveles de targtype1############################
+#questionr::freq(input$fe_targtype1,sort = "dec")
+#Creo una variable auxiliar, que la transformo a numérica
+input$aux <- as.numeric(as.factor(input$fe_targtype1))
+#Ordeno la variable auxiliar
+input$aux <- car::recode(input$aux, "c(3) = 'BUSINESS'; c(7) ='GOVERNMENT (GENERAL)';c(10) = 'MILITARY ';c(13) ='POLICE' ;c(14) = 'PRIVATE CITIZENS & PROPERTY' ;c(1) = '6';c(2) = '7';c(4) = '8';c(5) = '9';c(6) = '10';c(8) = '11';c(9) = '12';c(11) = '13';c(12) = '14';c(15) = '15';c(16) = '16';c(17) = '17';c(18) = '18';c(19) = '19';c(20) = '20';c(21) = '21'", as.factor = T)
+#Creo la variable numérica a partir de la auxliar
+input$fe_targtype1_retram <- as.numeric(as.factor(input$aux))
+#Acumulo las últimas categorías
+input$fe_targtype1_retram <- replace(input$fe_targtype1_retram, which(input$fe_targtype1_retram<17),6)
+#Recodifico la variable
+input$fe_targtype1_retram <- car::recode(input$fe_targtype1_retram, "c(17) = 'BUSINESS'; c(18) ='GOVERNMENT (GENERAL)';c(19) = 'MILITARY ';c(20) ='POLICE' ;c(21) = 'PRIVATE CITIZENS & PROPERTY' ;c(6) = 'OTHERS'", as.factor = T)
+
+#Elimino de las base de datos la original
+input$fe_targtype1 <- NULL
+
+####################Unión de los niveles de fe_weaptype1############################
+#questionr::freq(input$fe_weaptype1,sort = "dec")
+#Creo una variable auxiliar, que la transformo a numérica
+input$aux1 <- as.numeric(as.factor(input$fe_weaptype1))
+#Ordeno la variable auxiliar
+input$aux1 <- car::recode(input$aux1, "c(3) = 'Explosives'; c(5) ='Firearms';c(6) = 'Incendiary';c(1) = '4';c(2) = '5';c(4) = '6';c(7) = '7';c(8) = '8';c(9) = '9';c(10) = '10';c(11) = '11'", as.factor = T)
+#Creo la variable numérica a partir de la auxliar
+input$fe_weaptype1_retram <- as.numeric(as.factor(input$aux1))
+#Acumulo las primeras categorías
+input$fe_weaptype1_retram <- replace(input$fe_weaptype1_retram, which(input$fe_weaptype1_retram<9),4)
+#Recodifico la variable
+input$fe_weaptype1_retram <- car::recode(input$fe_weaptype1_retram, "c(9) = 'Explosives'; c(10) ='Firearms';c(11) = 'Incendiary';c(4) = 'OTHERS'", as.factor = T)
+
+#Elimino de las base de datos la original
+input$fe_weaptype1 <- NULL
+input$aux <- NULL
+input$aux1 <- NULL
+```
+
+
+**- Creación de nuevas variables**
+
+Crearé la variable **'distancia'** ya que las variables longitud y latitud por sí solas es posible que no aporten información relevante al modelo.
+
+```{r}
+#Creo la variable distancia
+input$fe_distancia <- ifelse((input$longitude!= -99999)&(input$latitude!= -99999),sqrt(input$longitude^2 + input$latitude^2), -99999)
+#Elimino las variables longitud y latitud
+input$longitude <- NULL
+input$latitude <- NULL
+
+#creo la variable trimestre, formando un factor con cuatro niveles, un nivel por cada trimestre. 1: Primer Trimestre, 2: Segundo trimestre, 3: Tercer Trimestre y 4:Cuarto trimestre.
+
+input$fe_trimestre <- as.factor(ifelse(input$fe_imonth<4,1,ifelse(input$fe_imonth >= 4 & input$fe_imonth <= 6 ,2,ifelse(input$fe_imonth
+>=7 & input$fe_imonth <= 9,3,4))))
+
+#Creo la variable quincena, formando un factor con dos niveles, un nivel por quincena del mes.
+
+input$fe_quincena <- as.factor(ifelse(input$fe_iday<16,1,2))
+```
+
+**-Transformación  de las variables categóricas a numéricas**
+
+```{r}
+# Por One-hot enconding
+input$fe_extended <- ifelse(input$extended == "Yes", 1, 0)
+input$fe_crit1 <- ifelse(input$crit1 == "Yes", 1, 0)
+input$fe_crit2 <- ifelse(input$crit2 == "Yes", 1, 0)
+input$fe_crit3 <- ifelse(input$crit3 == "Yes", 1, 0)
+input$fe_multiple <- ifelse(input$multiple == "Yes", 1, 0)
+input$fe_suicide <- ifelse(input$suicide == "Yes", 1, 0)
+input$fe_individual <- ifelse(input$individual == "Yes", 1, 0)
+input$fe_fe_doubtterr <- ifelse(input$fe_doubtterr == "Yes", 1, 0)
+input$fe_fe_INT_MISC <- ifelse(input$fe_INT_MISC == "Yes", 1, 0)
+input$fe_fe_ishostkid <- ifelse(input$fe_ishostkid == "Yes", 1, 0)
+input$fe_fe_property <- ifelse(input$fe_property == "Yes", 1, 0)
+input$fe_fe_vicinity <- ifelse(input$fe_vicinity == "Yes", 1, 0)
+
+#Por sustición de la frecuencia
+#Convertimos el data frame a data table
+input <- as.data.table(input)
+
+input[ , fe_INT_LOG := .N, by = .(INT_LOG)]
+input[ , fe_INT_IDEO := .N , by = .(INT_IDEO)]
+input[ , fe_INT_ANY := .N , by = .(INT_ANY)]
+input[ , fe_fe_attacktype1 := .N , by = .(fe_attacktype1)]
+input[ , fe_fe_nperps_tram := .N , by = .(fe_nperps_tram)]
+input[ , fe_fe_nperpcap_tram := .N , by = .(fe_nperpcap_tram)]
+input[ , fe_fe_nkill_tram := .N , by = .(fe_nkill_tram)]
+input[ , fe_fe_nkillter_tram := .N , by = .(fe_nkillter_tram)]
+input[ , fe_fe_nwound_tram := .N , by = .(fe_nwound_tram)]
+input[ , fe_fe_nwoundte_tram := .N , by = .(fe_nwoundte_tram)]
+input[ , fe_fe_targtype1_retram := .N , by = .(fe_targtype1_retram)]
+input[ , fe_fe_weaptype1_retram := .N , by = .(fe_weaptype1_retram)]
+input[ , fe_fe_trimestre := .N , by = .(fe_trimestre)]
+input[ , fe_fe_quincena := .N , by = .(fe_quincena)]
+
+
+#Eliminamos las antiguas variables
+to_rem <- c('extended', 'crit1', 'crit2', 'crit3', 'multiple', 'suicide', 'individual', 'fe_doubtterr', 'fe_INT_MISC', 'fe_ishostkid', 'fe_property', 'fe_vicinity', 'INT_LOG', 'INT_IDEO', 'INT_ANY', 'fe_attacktype1', 'fe_nperps_tram', 'fe_nperpcap_tram', 'fe_nkill_tram', 'fe_nkillter_tram', 'fe_nwound_tram', 'fe_nwoundte_tram', 'fe_targtype1_retram', 'fe_weaptype1_retram', 'fe_trimestre', 'fe_quincena')
+input[,(to_rem):=NULL]
+```
+
+
+**- Comprobación**
+
+A continuación, compruebo que los cambios se han realizado correctamente.
+
+```{r}
+summary(input)
+```
+```{r}
+any(is.na(input))
+```
+Podemos ver que **no** existen **valores perdidos**. Y que todas las **variables** predictoras son todas **numéricas**.
+
+A continuación, **uno** la **variable objetivo (success)** **con** las **variables predictoras** en un sólo data set. 
+
+```{r}
+#Unifico las variables predictoras y la variable objetivo, teniendo en cuenta que las observaciones están en el mismo orden.
+datosMod <- cbind(input, varObj)
+```
+
+Transformo la **variable objetivo** a **factor**
+```{r}
+datosMod$varObj <- as.factor(datosMod$varObj)
+```
+
+Compruebo de nuevo, el balance de la variable objetivo:
+
+```{r}
+round(prop.table(table(datosMod$varObj))*100, 2)
+```
+Vemos que la **variable objetivo** **no** está **balanceada**, por lo tanto, en vez de utilizar técnicas de sub/sobre muestreo, **parametrizaremos los algoritmos**, para que favorezcan a las clases minoritarias y para que nos optimice no sólo la métrica de ‘Accuacy’ si no también la métrica de **‘Recall’**.
+
+También podemos observar que, **no** hemos **eliminado NA's del 'yes'**, ya que, el porcentaje anterior a los cambios era el mismo 88.68%.
+
+A continuación, construiré **dos dataset**, uno con las **variables continúas** ('fe_npercap', 'nkill', 'nkillter', 'nwound' y 'nwoundte'), para el **escenario 1**, y otro con las mismas **variables** pero en este caso **recategorizadas**, para el **escenario 2**.
+
+**- Creación de la base de datos del escenario 1 (datos_Mod_es1)**
+
+```{r}
+#Creo el dataset con las variables numéricas especificadas anteriormente
+datos_Mod_es1 <- datosMod
+
+#Eliminamos la versión de las variables categorizadas
+datos_Mod_es1$fe_fe_nperpcap_tram <- NULL
+datos_Mod_es1$fe_fe_nkill_tram <- NULL
+datos_Mod_es1$fe_fe_nkillter_tram <- NULL
+datos_Mod_es1$fe_fe_nwound_tram <- NULL
+datos_Mod_es1$fe_fe_nwoundte_tram <- NULL
+datos_Mod_es1$fe_fe_trimestre <- NULL
+datos_Mod_es1$fe_fe_quincena <- NULL
+```
+
+**- Creación de la base de datos del escenario 2 (datos_Mod_es2)**
+
+```{r}
+#Creo el dataset con las variables recategorizadas especificadas anteriormente
+datos_Mod_es2 <- datosMod
+
+#Eliminamos la versión de las variables numéricas
+datos_Mod_es2$fe_nperpcap <- NULL
+datos_Mod_es2$nkill <- NULL
+datos_Mod_es2$nkillter <- NULL
+datos_Mod_es2$nwound <- NULL
+datos_Mod_es2$nwoundte <- NULL
+datos_Mod_es2$fe_imonth <- NULL
+datos_Mod_es2$fe_iday <- NULL
+```
+
+***
+
+# Análisis de igualdad entre las distribuciones de las variables predictoras y la target
+
+Dado que los **niveles de predicción** tanto en el conjunto de datos de **train, validación y test**, son **bastantes elevados**, voy a **analizar** las **distribuciones** de las variables **predictoras** frente a la **variable objetivo**, por **si** alguna de ellas tienen una **distribución similar** a la target. **De ser así**,habría que **eliminarla** de la base de datos.
+
+Las variables que voy a analizar **deben ser** del **mismo tipo** que la variable objetivo, es decir, **dicotómicas**. Ya que, una variable dicotómica y otra numérica, no pueden tener la misma distribución. Y tampoco si las dos son categóricas y tienen distintos valores.
+
+- **Análisis entre la variable objetivo y "fe_fe_property"**
+ 
+```{r}
+#Creo la tabla de contigencia
+tabla_varObj_property <- data.frame(target = datos_Mod_es1$varObj, property = datos_Mod_es1$fe_fe_property)
+
+tabla_varObj_property$property <- as.factor(tabla_varObj_property$property)
+tabla1 <- table(tabla_varObj_property$target, tabla_varObj_property$property)
+#Gráfico de la variable objetivo
+
+tabla_prop <- prop.table(tabla1, margin=2)
+grafico_sucess <- barplot(tabla_prop[,1], 
+        beside = TRUE, las=1, 
+        xlab='sucess', ylab='Frecuencia relativa',
+        col = c("lightblue"),
+        ylim = c(0, 1))
+text(x=grafico_sucess, y=tabla_prop[,1], pos=3, cex=0.8, col="black",
+     label=round(tabla_prop[,1], 4))
+```
+
+```{r}
+
+#Gráfico de la variable property
+grafico_property <- barplot(tabla_prop[,2], 
+        beside = TRUE, las=1, 
+        xlab='sucess', ylab='Frecuencia relativa',
+        col = c("lightblue"),
+        ylim = c(0, 1))
+text(x=grafico_property, y=tabla_prop[,2], pos=3, cex=0.8, col="black",
+     label=round(tabla_prop[,2], 4))
+```
+
+**Gráficamente** se podría decir que siguen la **misma distribución**. 
+
+A continuación, voy a **realizar** los **contrastes** de hipótesis **adecuados** para la igualdad de distribuciones.
+
+**Antes** de contratar la igualdad de distribuciones, debemos saber **si** estas dos variables son **independientes**.
+
+a.- *Contraste de Independecia de Pearson*:
+
+*H0: Las dos variables son independientes*
+*H1: Las dos variables son dependientes*
+
+```{r}
+#Creo la tabla de contigencia
+tabla_varObj_property <- data.frame(target = datos_Mod_es1$varObj, property = datos_Mod_es1$fe_fe_property)
+
+tabla_varObj_property$property <- as.factor(tabla_varObj_property$property)
+tabla1 <- table(tabla_varObj_property$target, tabla_varObj_property$property)
+#Realizo el contraste de la Chi-cuadrado de Pearson
+chisq.test(x = tabla1)
+```
+
+Como vemos el **p-valor** es **menor** que **0.05**, por lo tanto, los datos muestran evidencia en contra de la independencia entre las dos variables. Es decir, son **datos dependientes**.
+
+Y además, las dos varibles son dicotómicas, por lo que no podemos hacer el contraste de los rangos con signo de Wilcoxon, ni de Friedman.
+
+b.- *Contraste de Mc Nemar*
+
+Las dos variables a analizar son dicotómicas y dependientes. Así pues, para poder estudiar si la distribución de ambas variables es la misma, me basaré en el contraste de Mc Nemar. Se utiliza para determinar **si existe una diferencia estadísticamente significativa en las proporciones** entre los datos emparejados
+
+- Condiciones:
+
+  - Se trata de datos dependientes. 
+  
+  - Se estudian dos variables, ambas de tipo binomial (dicotómicas). 
+  
+  - La suma de eventos que pasan de positivo a negativo y de negativo a positivo ha     de ser > 25.
+  
+
+```{r}
+mcnemar.test(tabla1)
+```
+
+Con un **nivel de confianza del 95%**, podemos decir que las dos variables siguen la **misma distribucción**. Por lo que,dedemos eliminarla de las bases de datos.
+
+```{r}
+#Elimino fe_fe_property de escenario 1 y 2
+datos_Mod_es1$fe_fe_property <- NULL
+datos_Mod_es2$fe_fe_property <- NULL
+```
+
+- **Análisis entre la variable objetivo y "fe_extended"**
+
+a.- *Contraste de Independecia de Pearson*:
+
+*H0: Las dos variables son independientes*
+*H1: Las dos variables son dependientes*
+
+```{r}
+#Creo la tabla de contigencia
+tabla_varObj_extended <- data.frame(target = datos_Mod_es1$varObj, extended = datos_Mod_es1$fe_extended)
+
+tabla_varObj_extended$extended <- as.factor(tabla_varObj_extended$extended)
+tabla2 <- table(tabla_varObj_extended$target, tabla_varObj_extended$extended)
+#Realizo el contraste de la Chi-cuadrado de Pearson
+chisq.test(x = tabla2)
+```
+
+Con un **nivel** de confianza del **95%**, podemos decir que las **variables** son **dependientes**.
+
+b.- *Contraste de Mc Nemar*
+
+```{r}
+mcnemar.test(tabla2)
+```
+
+Con un **nivel** de confianza del **95%**, podemos decir que las dos variables tienen la **misma distribución**, por lo que **debemos eliminarla** de la base de datos.
+
+```{r}
+#Elimino fe_extended de escenario 1 y 2
+datos_Mod_es1$fe_extended <- NULL
+datos_Mod_es2$fe_extended <- NULL
+```
+
+- **Análisis entre la variable objetivo y "fe_crit1"**
+
+a.- *Contraste de Independecia de Pearson*:
+
+*H0: Las dos variables son independientes*
+*H1: Las dos variables son dependientes*
+
+```{r}
+#Creo la tabla de contigencia
+tabla_varObj_crit1 <- data.frame(target = datos_Mod_es1$varObj, crit1 = datos_Mod_es1$fe_crit1)
+
+tabla_varObj_crit1$crit1 <- as.factor(tabla_varObj_crit1$crit1)
+tabla3 <- table(tabla_varObj_crit1$target, tabla_varObj_crit1$crit1)
+#Realizo el contraste de la Chi-cuadrado de Pearson
+chisq.test(x = tabla3)
+```
+
+Con un **nivel** de confianza del **95%**, podemos decir que las **variables** son **dependientes**.
+
+b.- *Contraste de Mc Nemar*
+
+```{r}
+mcnemar.test(tabla3)
+```
+
+Con un **nivel** de confianza del **95%**, podemos decir que las dos variables tienen la **misma distribución**, por lo que **debemos eliminarla** de la base de datos.
+
+```{r}
+#Elimino fe_crit1 de escenario 1 y 2
+datos_Mod_es1$fe_crit1 <- NULL
+datos_Mod_es2$fe_crit1 <- NULL
+```
+
+
+- **Análisis entre la variable objetivo y "fe_crit2"**
+
+a.- *Contraste de Independecia de Pearson*:
+
+*H0: Las dos variables son independientes*
+*H1: Las dos variables son dependientes*
+
+```{r}
+#Creo la tabla de contigencia
+tabla_varObj_crit2 <- data.frame(target = datos_Mod_es1$varObj, crit2 = datos_Mod_es1$fe_crit2)
+tabla_varObj_crit2$crit2 <- as.factor(tabla_varObj_crit2$crit2)
+tabla4 <- table(tabla_varObj_crit2$target, tabla_varObj_crit2$crit2)
+#Realizo el contraste de la Chi-cuadrado de Pearson
+chisq.test(x = tabla4)
+```
+
+Con un **nivel** de confianza del **95%**, las variables son **dependientes**.
+
+b.- *Contraste de Mc Nemar*
+
+```{r}
+mcnemar.test(tabla4)
+```
+
+Con un **nivel** de confianza del **95%**, podemos decir que las dos variables tienen la **misma distribución**, por lo que **debemos eliminarla** de la base de datos.
+
+```{r}
+#Elimino fe_crit2 de escenario 1 y 2
+datos_Mod_es1$fe_crit2 <- NULL
+datos_Mod_es2$fe_crit2 <- NULL
+```
+
+
+- **Análisis entre la variable objetivo y "fe_crit3"**
+
+a.- *Contraste de Independecia de Pearson*:
+
+*H0: Las dos variables son independientes*
+*H1: Las dos variables son dependientes*
+
+```{r}
+#Creo la tabla de contigencia
+tabla_varObj_crit3 <- data.frame(target = datos_Mod_es1$varObj, crit3 = datos_Mod_es1$fe_crit3)
+tabla_varObj_crit3$crit3 <- as.factor(tabla_varObj_crit3$crit3)
+tabla5 <- table(tabla_varObj_crit3$target, tabla_varObj_crit3$crit3)
+#Realizo el contraste de la Chi-cuadrado de Pearson
+chisq.test(x = tabla5)
+```
+
+Con un **nivel** de confianza del **95%**, las variables son **dependientes**.
+
+b.- *Contraste de Mc Nemar*
+
+```{r}
+mcnemar.test(tabla5)
+```
+
+Con un **nivel** de confianza del **95%**, podemos decir que las dos variables tienen la **misma distribución**, por lo que **debemos eliminarla** de la base de datos.
+
+```{r}
+#Elimino fe_crit3 de escenario 1 y 2
+datos_Mod_es1$fe_crit3 <- NULL
+datos_Mod_es2$fe_crit3 <- NULL
+```
+
+- **Análisis entre la variable objetivo y "fe_multiple"**
+
+a.- *Contraste de Independecia de Pearson*:
+
+*H0: Las dos variables son independientes*
+*H1: Las dos variables son dependientes*
+
+```{r}
+#Creo la tabla de contigencia
+tabla_varObj_multiple <- data.frame(target = datos_Mod_es1$varObj, multiple = datos_Mod_es1$fe_multiple)
+tabla_varObj_multiple$multiple <- as.factor(tabla_varObj_multiple$multiple)
+tabla6 <- table(tabla_varObj_multiple$target, tabla_varObj_multiple$multiple)
+#Realizo el contraste de la Chi-cuadrado de Pearson
+chisq.test(x = tabla6)
+```
+
+Con un **nivel** de confianza del **95%**, las variables son **dependientes**.
+
+b.- *Contraste de Mc Nemar*
+
+```{r}
+mcnemar.test(tabla6)
+```
+
+Con un **nivel** de confianza del **95%**, podemos decir que las dos variables tienen la **misma distribución**, por lo que **debemos eliminarla** de la base de datos.
+
+```{r}
+#Elimino fe_multiple de escenario 1 y 2
+datos_Mod_es1$fe_multiple <- NULL
+datos_Mod_es2$fe_multiple<- NULL
+```
+
+- **Análisis entre la variable objetivo y "fe_suicide"**
+
+a.- *Contraste de Independecia de Pearson*:
+
+*H0: Las dos variables son independientes*
+*H1: Las dos variables son dependientes*
+
+```{r}
+#Creo la tabla de contigencia
+tabla_varObj_suicide <- data.frame(target = datos_Mod_es1$varObj, suicide = datos_Mod_es1$fe_suicide)
+tabla_varObj_suicide$suicide <- as.factor(tabla_varObj_suicide$suicide)
+tabla7 <- table(tabla_varObj_suicide$target, tabla_varObj_suicide$suicide)
+#Realizo el contraste de la Chi-cuadrado de Pearson
+chisq.test(x = tabla7)
+```
+
+Con un **nivel** de confianza del **95%**, las variables son **dependientes**.
+
+b.- *Contraste de Mc Nemar*
+
+```{r}
+mcnemar.test(tabla7)
+```
+
+Con un **nivel** de confianza del **95%**, podemos decir que las dos variables tienen la **misma distribución**, por lo que **debemos eliminarla** de la base de datos.
+
+```{r}
+#Elimino fe_suicide de escenario 1 y 2
+datos_Mod_es1$fe_suicide <- NULL
+datos_Mod_es2$fe_suicide<- NULL
+```
+
+- **Análisis entre la variable objetivo y "fe_individual"**
+
+a.- *Contraste de Independecia de Pearson*:
+
+*H0: Las dos variables son independientes*
+*H1: Las dos variables son dependientes*
+
+```{r}
+#Creo la tabla de contigencia
+tabla_varObj_individual <- data.frame(target = datos_Mod_es1$varObj, individual = datos_Mod_es1$fe_individual)
+tabla_varObj_individual$individual <- as.factor(tabla_varObj_individual$individual)
+tabla8 <- table(tabla_varObj_individual$target, tabla_varObj_individual$individual)
+#Realizo el contraste de la Chi-cuadrado de Pearson
+chisq.test(x = tabla8)
+```
+
+Con un **nivel** de confianza del **95%**, las variables son **dependientes**.
+
+b.- *Contraste de Mc Nemar*
+
+```{r}
+mcnemar.test(tabla8)
+```
+
+Con un **nivel** de confianza del **95%**, podemos decir que las dos variables tienen la **misma distribución**, por lo que **debemos eliminarla** de la base de datos.
+
+```{r}
+#Elimino fe_suicide de escenario 1 y 2
+datos_Mod_es1$fe_individual <- NULL
+datos_Mod_es2$fe_individual<- NULL
+```
+
+- **Análisis entre la variable objetivo y "fe_fe_doubtterr"**
+
+a.- *Contraste de Independecia de Pearson*:
+
+*H0: Las dos variables son independientes*
+*H1: Las dos variables son dependientes*
+
+```{r}
+#Creo la tabla de contigencia
+tabla_varObj_doubtterr <- data.frame(target = datos_Mod_es1$varObj, doubtterr = datos_Mod_es1$fe_fe_doubtterr)
+tabla_varObj_doubtterr$doubtterr <- as.factor(tabla_varObj_doubtterr$doubtterr)
+tabla9 <- table(tabla_varObj_doubtterr$target, tabla_varObj_doubtterr$doubtterr)
+#Realizo el contraste de la Chi-cuadrado de Pearson
+chisq.test(x = tabla9)
+```
+
+Con un **nivel** de confianza del **95%**, las variables son **dependientes**.
+
+b.- *Contraste de Mc Nemar*
+
+```{r}
+mcnemar.test(tabla9)
+```
+
+Con un **nivel** de confianza del **95%**, podemos decir que las dos variables tienen la **misma distribución**, por lo que **debemos eliminarla** de la base de datos.
+
+```{r}
+#Elimino fe_suicide de escenario 1 y 2
+datos_Mod_es1$fe_fe_doubtterr <- NULL
+datos_Mod_es2$fe_fe_doubtterr<- NULL
+```
+
+- **Análisis entre la variable objetivo y "fe_fe_INT_MISC"**
+
+a.- *Contraste de Independecia de Pearson*:
+
+*H0: Las dos variables son independientes*
+*H1: Las dos variables son dependientes*
+
+```{r}
+#Creo la tabla de contigencia
+tabla_varObj_INT_MISC <- data.frame(target = datos_Mod_es1$varObj, INT_MISC = datos_Mod_es1$fe_fe_INT_MISC)
+tabla_varObj_INT_MISC$INT_MISC <- as.factor(tabla_varObj_INT_MISC$INT_MISC)
+tabla10 <- table(tabla_varObj_INT_MISC$target, tabla_varObj_INT_MISC$INT_MISC)
+#Realizo el contraste de la Chi-cuadrado de Pearson
+chisq.test(x = tabla10)
+```
+
+Con un **nivel** de confianza del **95%**, las variables son **dependientes**.
+
+b.- *Contraste de Mc Nemar*
+
+```{r}
+mcnemar.test(tabla10)
+```
+
+Con un **nivel** de confianza del **95%**, podemos decir que las dos variables tienen la **misma distribución**, por lo que **debemos eliminarla** de la base de datos.
+
+```{r}
+#Elimino fe_suicide de escenario 1 y 2
+datos_Mod_es1$fe_fe_INT_MISC <- NULL
+datos_Mod_es2$fe_fe_INT_MISC<- NULL
+```
+
+- **Análisis entre la variable objetivo y "fe_fe_ishostkid"**
+
+a.- *Contraste de Independecia de Pearson*:
+
+*H0: Las dos variables son independientes*
+*H1: Las dos variables son dependientes*
+
+```{r}
+#Creo la tabla de contigencia
+tabla_varObj_ishostkid <- data.frame(target = datos_Mod_es1$varObj, ishostkid = datos_Mod_es1$fe_fe_ishostkid)
+tabla_varObj_ishostkid$ishostkid <- as.factor(tabla_varObj_ishostkid$ishostkid)
+tabla11 <- table(tabla_varObj_ishostkid$target, tabla_varObj_ishostkid$ishostkid)
+#Realizo el contraste de la Chi-cuadrado de Pearson
+chisq.test(x = tabla11)
+```
+
+Con un **nivel** de confianza del **95%**, las variables son **dependientes**.
+
+b.- *Contraste de Mc Nemar*
+
+```{r}
+mcnemar.test(tabla11)
+```
+
+Con un **nivel** de confianza del **95%**, podemos decir que las dos variables tienen la **misma distribución**, por lo que **debemos eliminarla** de la base de datos.
+
+```{r}
+#Elimino fe_suicide de escenario 1 y 2
+datos_Mod_es1$fe_fe_ishostkid <- NULL
+datos_Mod_es2$fe_fe_ishostkid<- NULL
+```
+
+- **Análisis entre la variable objetivo y "fe_fe_vicinity"**
+
+a.- *Contraste de Independecia de Pearson*:
+
+*H0: Las dos variables son independientes*
+*H1: Las dos variables son dependientes*
+
+```{r}
+#Creo la tabla de contigencia
+tabla_varObj_vicinity <- data.frame(target = datos_Mod_es1$varObj, vicinity = datos_Mod_es1$fe_fe_vicinity)
+tabla_varObj_vicinity$vicinity <- as.factor(tabla_varObj_vicinity$vicinity)
+tabla12 <- table(tabla_varObj_vicinity$target, tabla_varObj_vicinity$vicinity)
+#Realizo el contraste de la Chi-cuadrado de Pearson
+chisq.test(x = tabla12)
+```
+
+Con un **nivel** de confianza del **95%**, las variables son **independientes**.
+
+b.- *Test exacto de Fisher*
+
+Condiciones del test: 
+
+  - Independencia: las observaciones de la muestra deben ser independientes unas de     otras.
+
+  - Muestreo aleatorio.
+  - Tamaño de la muestra < 10% población.
+  
+Cada observación contribuye únicamente a uno de los niveles.
+
+```{r}
+fisher.test(x = tabla12, alternative = "two.sided")
+```
+
+Con un **nivel** de confianza del **95%**, podemos decir que estas dos variables **no** tienen la **misma distribución**.
+
+***
+A continuación, **guardo** las dos **bases de datos** para posteriormente, empezar con la fase de Modelización.
+
+```{r}
+#Guardo los dataset del escenario 1, depurados para la fase de modelización
+fwrite(datos_Mod_es1, 'datos_escenario1_atentados.csv')
+
+#Guardo los dataset del escenario 2, depurados para la fase de modelización
+fwrite(datos_Mod_es2, 'datos_escenario2_atentados.csv')
+```
+
+***
+
+
+
+

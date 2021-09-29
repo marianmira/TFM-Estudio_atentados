@@ -1,0 +1,2110 @@
+---
+title: "TFM - Anexo II.- Fase de Modelización"
+author: "Mª Antonia Mira Paz"
+date: "9/7/2021"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    toc: yes
+    toc_float: yes
+    code_folding: show
+    number_sections: true
+  epuRate::epurate:
+    toc: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+    number_sections: true
+    latex_engine: xelatex
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+***
+
+# Objetivos de esta fase.
+
+- En esta fase encontraremos el **mejor modelo** para predecir **si** un             **atentado** se llevará a cabo con **éxito o fracaso**, mediante técnicas de       **Machine Learning**. Para ello, utilizaré **algoritmos de clasificación** tanto   de la **librería** **Caret**, como de la librería **H2O**. Determinando el nivel   de precisión de cada modelo y analizando los resultados del mismo.
+
+- Analizaré las **variables más importantes** de dicho modelo. Con el fin de que     esta información pueda utilizarse después.
+
+***
+
+# Lectura de los datos.
+
+Tener en cuenta que en esta fase utilizaré los **dataset** del **AnexoI**, **depurados y preparados**, para poder utilizarse con diferentes algortimos de Machine Learning.
+
+Recordemos que **analizaré** la **bondad del ajuste** de cada **modelo**, diferenciando **dos escenarios**.
+
+- **Escenario 1**: Dataset **con** las variables **numéricas**: **'nkill'**, **'nkillter'**, **'nwound'**, **'nwoundte'**, **'fe_npercap'**, **'fe_imonth'** y **'fe_iday'**.
+
+- **Escenario 2**: Dataset con **las** variables numéricas **recategorizadas**: **'fe_fe_nperpcap_tram'** , **'fe_fe_nkill_tram'**, **'fe_fe_nkillter_tram'**, **'fe_fe_nwound_tram'**, **'fe_fe_nwoundte_tram'**, **'fe_quincena'** y **'fe_trimestre'**.
+
+Empezaré por establecer nuestro directorio de trabajo, cargar las funciones y paquetes que vamos a utilizar.
+
+```{r}
+#Fijo nuestro directorio de trabajo
+setwd('./')
+
+#Cargo las funciones necesarias
+source("./Funciones_R.R")
+```
+
+Cargo las librerias necesarias
+
+```{r  lectura inicial, echo = TRUE, message=FALSE, warning=FALSE}
+
+suppressPackageStartupMessages({
+  library(data.table)
+  library(dplyr)
+  library(caret)
+  library(scales)
+  library(ggplot2)
+  library(gridExtra)
+  library(stringi)
+  library(stringr)
+  library(dataPreparation)
+  library(knitr)
+  library(kableExtra)
+  library(ggpubr)
+  library(tictoc)
+  library(ggeasy)
+  library(lubridate)
+  library(inspectdf)
+  library(fastDummies)
+  library(e1071)
+  library(MLmetrics)
+  library(ranger)
+  library(caTools)
+  library(h2o)
+  library(questionr)
+  library(corrplot)
+  library(funModeling)
+  library(glmnet)
+  
+  library(tidyr)
+})
+```
+
+A continuación, cargo los datos de ambos escenarios
+
+```{r}
+#Cargo los datos del primer escenario (variables continuas)
+datMod_es1 <- as.data.frame(fread("datos_escenario1_atentados.csv"), nThread = 2)
+
+#Cargo los datos del segundo escenario (variables recategorizadas)
+datMod_es2 <- as.data.frame(fread("datos_escenario2_atentados.csv"), nThread = 2)
+```
+
+Los dataset contienen **191464 registros** y **21 variables**.
+
+```{r}
+#Compruebo el tipo de las variables del dataset del escanario 1 por si hubiera algún error
+str(datMod_es1)
+```
+```{r}
+#Compruebo el tipo de las variables del dataset del escanario 2 por si hubiera algún error
+str(datMod_es2)
+```
+Los dataset contienen **191464 registros** y **21 variables**.
+
+Observo que al leer los archivos en R, se han modidificado en ambos dataset el tipo de la variable objetivo, ahora aparacen como tipo carácter, por lo que debemos cambiarlos de nuevo, a tipo factor.
+
+```{r}
+#Transformo la clase de la variable objetivo en el dataset del primer escenario
+datMod_es1$varObj <- as.factor(datMod_es1$varObj)
+
+#Transformo la clase de la variable objetivo en el dataset del segundo escenario
+datMod_es2$varObj <- as.factor(datMod_es2$varObj)
+```
+
+Compruebo de nuevo los tipos de las variables de los archivos
+
+```{r}
+#str(datMod_es1)
+#str(datMod_es2)
+```
+
+Ahora la **variable objetivo** está en el **tipo correcto**
+
+***
+
+# Train & Test.
+
+Voy a crear los **subconjuntos** de datos, tanto para **entrenar** el modelo, como para **validarlo**.
+
+## Train & Test para el escenario 1.
+
+Formo la partición **Train/Test** para el conjunto de datos del **escenario 1**.
+
+```{r}
+#Split out validation dataset
+#Create a list of 80% of the rows in the original dataset we can use for trainig
+set.seed(7)
+validationIndex <- createDataPartition (datMod_es1$varObj, p=0.80, list = FALSE)
+#use the remaining 80% of data to training and testing
+train_es1 <- datMod_es1[validationIndex,]
+#select 20% of the data for validation
+test_es1 <- datMod_es1[-validationIndex,]
+```
+
+
+## Train & Test para el escenario 2.
+
+Creo la partición **Train/Test** para el conjunto de datos del **escenario 2**.
+
+```{r}
+#Split out validation dataset
+#Create a list of 80% of the rows in the original dataset we can use for trainig
+set.seed(7)
+validationIndex <- createDataPartition (datMod_es2$varObj, p=0.80, list = FALSE)
+#use the remaining 80% of data to training and testing
+train_es2 <- datMod_es2[validationIndex,]
+#select 20% of the data for validation
+test_es2 <- datMod_es2[-validationIndex,]
+```
+
+
+***
+
+# Libreria Caret.
+
+Empezaré por los **algoritmos de clasificación** más **clásicos** que nos proporciona la **librería Caret**. 
+
+## Algoritmo 'GLM'
+
+En primer lugar, voy a utilizar el algoritmo 'GLM', es uno de los **algoritmos de Machine Learning más simples** y **más utilizados** para la **clasificación de dos clases**. 
+
+- **Ventajas**: 
+  
+  - Es **fácil de implementar e interpretar**.
+  
+  - Se puede usar **como** línea de **base** para cualquier problema de                clasificación binaria.
+  
+  - Un **algoritmo** de **clasificación bastante bueno**, **siempre que** espere       que sus **características** sean **aproximadamente lineales**. 
+  
+  - Da **estimaciones** de qué **variables** son **importantes** en la                 clasificación.
+
+- **Incovenientes**: 
+
+  - Existencia de datos no lineales, se debe hacer un **buen Feature Engineering**     para poder **convertir** fácilmente la mayoría de las **características no         lineales** en **características lineales**.
+  
+  - Con los **valores muy anómalos**, este algoritmo puede **abortar su                ejecución**.
+  
+  - Sufre de **multicolinealidad**.
+  
+  - Necesario **estandarizar** los datos.
+  
+### Algoritmo 'GLM' para el escenario 1.
+
+```{r message=FALSE, warning=FALSE}
+
+#Creo la función de control con validación cruzada y así evitar el Overfiting
+trainControl <- trainControl(method = "cv", #Evitamos el overfitting
+                             number = 5,
+                             classProbs = TRUE, #Para que calcule las probabilidades de clase en cada muestra.
+                             summaryFunction = twoClassSummary, 
+                             returnResamp = "all"
+)
+#Fijo la semilla
+set.seed(7)
+#Entreno el modelo glm para el escenario 1 con los datos de train
+modelo1_glm_es1 <- train(
+            varObj ~ .,
+            data = train_es1,
+            method = 'glm',
+            metric = 'ROC',
+            preProc = c("center", "scale"), #Estandarizo los datos
+            family = binomial,
+            trControl = trainControl
+)
+```
+
+
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+print(modelo1_glm_es1, positive = "Yes")
+```
+
+El modelo tiene una estimación del error en train del **79% (ROC)**. 
+
+- **Estimación de los coeficientes del modelo.**
+```{r}
+summary(modelo1_glm_es1)
+```
+
+Podemos **ver** los **parámetros** que son **significativamente distintos** de **cero**. Es decir, la **aportación** de variabilidad de **cada variable al modelo** predictivo y así hacernos una idea inicial de las variables más o menos influyentes en el modelo. 
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+```{r message=FALSE, warning=FALSE}
+#Fijo la semilla
+set.seed(7)
+#Genero el modelo con los datos de test, escenario 1.
+modelo1_glm_es1_test <- train(
+            varObj ~ .,
+            data = test_es1,
+            method = 'glm',
+            metric = 'ROC',
+            preProc = c("center", "scale"), #Estandarizo los datos
+            trControl = trainControl #Utilizo el mismo trainControl que el anterior
+)
+```
+
+```{r}
+set.seed(7)
+#Imprimimos las métricas del modelo en Test
+print(modelo1_glm_es1_test, positive = "Yes")
+```
+Vemos como la curva **ROC**, se mantiene en **test** en un **79%** (79% en train), lo que me hace pensar que **no** hay **overtting**.
+
+- **Matriz de confusión.**
+```{r}
+set.seed(7)
+#Calculo las prediciones para test
+prediciones <- predict(modelo1_glm_es1_test, newdata = test_es1)
+#Obtengo la matriz de confusión y mérticas del modelo en test
+confusionMatrix(test_es1$varObj, prediciones, positive = "Yes")
+```
+
+Dado que nuestro **datos** están **desbalanceados**, debemos tener **en cuenta** para medir la efectividad de nuestro modelo, no sólo, la **capacidad y precisión**, que tiene de **clasificar correctamente** los **casos exitosos**, si no también, la capacidad y precisión, que tiene de clasificar los **casos no exitosos**. Por que si sólo tenemos encuenta la clase mayoritaria, tendremos una falsa sensación de que el modelo funciona bien.
+
+Por lo que, tendremos en cuenta las **métricas** de **'Precisión'** y **'Recall'** **por** cada **clase**.
+
+Si observamos la matriz de confusión, podemos ver que de los 71 atentados que en realidad no son exitosos, el modelo es capaz de reconocer a 13 (hay 58 falsos positivos), de 38221 que son en realidad atentados exitosos, el modelo reconoce a 33901 (hay 4320 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **89.70%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **18.31%** (Recall - 'No: Especifidad). La **capacidad media** de reconocer los casos correctamente , tanto exitosos como no exitosos, es del **53.50%** (Balanced Accuracy: Media de los 'Recall' en las dos clases).
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en lo **casos exitosos** el modelo tiene una precisión muy alta, **99.83%**. **Y** nivel de precisión en los casos **no exitosos**, es del **0.3%!**! Una  precisión muy baja. 
+
+Este modelo **clasifica muy bien** los **casos exitosos**, pero no tanto los casos no exitosos, por lo que **debemos mejorar** el modelo, intentado aumentar la **capacidad** **y** la **precisión** de reconocer los **casos no exitosos**.
+
+- **Importancia de cada variable.**
+
+```{r}
+#Gráfico de las variables más importantes para el modelo
+plot(varImp(modelo1_glm_es1))
+```
+
+Podemos decir que las variable que **aporta mayor información** al modelo con diferencia son, **'nkill'** y **'nkillter'**,  seguidas de, **'iyear'**, **'nwound'** y **'weaptype1'**. El resto de variables por debajo del 50%. 
+
+### Algoritmo 'GLM' para el escenario 2.
+
+Probaré con el algoritmo anterior, para el **grupo de datos** que contiene, algunas de las variables especificadas anteriormente, en **versión categoríca**. Y así poder ver si mejora el modelo en valor predictivo.
+
+```{r message=FALSE, warning=FALSE}
+
+#Creo la función de control con validación cruzada y así evitar el Overfiting
+trainControl <- trainControl(method = "cv", #Evitamos el overfitting
+                             number = 5,
+                             classProbs = TRUE,
+                             summaryFunction = twoClassSummary, 
+                             returnResamp = "all"
+)
+#Fijo la semilla
+set.seed(7)
+#Entreno el modelo glm para el escenario 2 con los datos de train
+modelo2_glm_es2 <- train(
+            varObj ~ .,
+            data = train_es2,
+            method = 'glm',
+            metric = 'ROC',
+            preProc = c("center", "scale"), #Estandarizo los datos
+            family = binomial,
+            trControl = trainControl
+)
+```
+
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+print(modelo2_glm_es2)
+```
+El modelo tiene una estimación del error en train del **79.32% (ROC)**. 
+
+- **Estimación de los coeficientes del modelo.**
+```{r}
+summary(modelo2_glm_es2)
+```
+
+Vemos como la aportación de algunas de las variables ha cambiado.
+
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+```{r}
+#Fijo la semilla
+set.seed(7)
+#Genero el modelo con los datos de test, escenario 2.
+modelo2_glm_es2_test <- train(
+            varObj ~ .,
+            data = test_es2,
+            method = 'glm',
+            metric = 'ROC',
+            preProc = c("center", "scale"), #Estandarizo los datos
+            trControl = trainControl
+)
+```
+
+```{r}
+#Imprimimos las métricas del modelo en Test
+print(modelo2_glm_es2_test, positive = "Yes")
+```
+Vemos como la curva **ROC**, se mantiene en **test** en un **79.16%** (79.32% en train), lo que me hace pensar que **no** hay **overtting**. 
+
+Con los datos del **escenario 2**, hemos **mejorado** un **poco** la **'Precisión'** de los **casos no exitosos**, con este modelo obtenemos una precisión del **3%** (antes 0.3%), y la precisión en los **casos exitosos**, sigue mantenidos en el **99%**.
+
+
+- **Matriz de confusión.**
+```{r}
+#Calculo las prediciones para test
+prediciones <- predict(modelo2_glm_es2_test, newdata = test_es2)
+#Obtengo la matriz de confusión y mérticas del modelo en test
+confusionMatrix(test_es2$varObj, prediciones, positive = "Yes")
+```
+
+Si observamos la matriz de confusión, podemos ver que de los 246 atentados que en realidad no son exitosos, el modelo es capaz de reconocer a 151 (hay 95 falsos positivos), de 38046 que son en realidad atentados exitosos, el modelo reconoce a 33864 (hay 4182 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **89%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **61.38%** (Recall - 'No: Especifidad). Con los datos del escenario 2, hemos **mejorado un poco**, la **capacidad** de **clasificar** **los** atentados **no exitosos** (antes 18.31%, ahora 61.38%).
+
+Este pequeño aumento, se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **75.19%** (Balanced Accuracy: Media de los 'Recall' en las dos clases).
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión muy alta, **99.72%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **3%**, hemos **mejorado un poco** respecto al modelo anterior con los datos de las varibles sin modificar, lo que me hace pensar que las **transformaciones** de las **variables numéricas**, **mejoran** la relación lineal con la variables respuesta y esto se ve reflejado en el **nivel de predicción** del modelo. 
+
+- **Importancia de cada variable.**
+
+```{r}
+#Gráfico de las variables más importantes para el modelo
+plot(varImp(modelo2_glm_es2))
+```
+
+Con la base de datos, en el que algunas de las variables numéricas han sido tramificadas, el ranking de la **importancia** de las **variables** en el modelo **ha cambiado**.
+
+**'Nkill'** **sigue** siendo la variable **más importante**, con diferencia,  seguida de **'iyear'**, **'nkillter'**, **'nwound'**, **'weaptype'** y **'attacktype1'**.
+
+## Algoritmo 'LDA'
+
+A continuación, voy a utilizar el algoritmo linear Discriminat Analysis. Es un **método de clasificación supervisado** de variables cualitativas en el que dos o más grupos son conocidos a priori y nuevas observaciones se clasifican en uno de ellos en función de sus características. Es una **alternativa** al **algoritmo de regresión logística** cuando **existen múltiples clases** en la variable objetivo.
+
+- **Ventajas**: 
+  
+  - **Si** las **clases** están **bien separadas**, los **parámetros estimados**       **en** el modelo de **regresión logística** son **inestables**. En el método de     **LDA** **no sufre este problema**.
+  
+  - **Si** el número de **observaciones** es **bajo** **y** la **distribución** de     los **predictores** es **aproximadamente normal** en cada una de las clases,       **LDA es más estable** que la regresión logística.
+  
+  - Da **estimaciones** de qué **variables** son **importantes** en la                 clasificación.
+
+- **Incovenientes**: 
+
+  - Cada **predictor** debe seguir una **distribución normal** en cada una de sus      clases. **Cuando** la condición de normalidad **no se cumple**, el LDA **pierde     precisión**.
+  
+  - Al igual que en el 'GLM', debemos **escalar** los **datos**.
+  
+### Algoritmo 'LDA' para el escenario 1.
+
+```{r message=FALSE, warning=FALSE}
+#Creo la función de control con validación cruzada y así evitar el Overfiting
+control <- trainControl(
+  method = 'cv',
+  number = 5 
+
+)
+set.seed(7)
+modelo3_LDA_es1 <- train(
+  varObj ~ .,
+  data = train_es1,
+  method = 'lda',
+  metric = 'Accuracy',
+  trControl = control,
+  preProc = c('center', 'scale') #Escalamos los datos
+)
+```
+
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+print(modelo3_LDA_es1)
+```
+Con el data train obtenemos Accuracy del 88%
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+
+```{r}
+library(MLmetrics)
+
+prediciones_modelo3_LDA_es1 <- predict(modelo3_LDA_es1, newdata = test_es1)
+confusionMatrix(test_es1$varObj, prediciones_modelo3_LDA_es1, positive = "Yes")
+#Recall(y_true = test_es1$varObj, y_pred = prediciones_modelo3_LDA, positive = "Yes")
+```
+
+Vemos como en test, tenemos un Accuracy del 88.68%, igual que el alcanzado en test, por lo que, **no** tenemos **overfitting**.
+
+Si observamos la matriz de confusión, podemos ver que de los 5 atentados que en realidad no son exitosos, el modelo no ha sido capaz de reconocer a ninguno, de 38287 que son en realidad atentados exitosos, el modelo reconoce a 33954 (hay 4333 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **88.68%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **0%!!** (Recall - 'No: Especifidad). Este modelo no serviría ya que no ha sido capaz de reconocer ningún caso no exitoso.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **44%** (Balanced Accuracy: Media de los 'Recall' en las dos clases), porcentaje más bajo que el obtenido hasta entonces.
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión muy alta, **99.99%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **0%**. 
+
+Este **modelo no es bueno**, ya que **no nos clasifica ningún caso no exitoso**. Esto es lógico ya que muchas de las distribuciones de las variables predictoras no se asemejan a una Normal.
+
+
+- **Importancia de cada variable.**
+
+```{r}
+#Gráfico de las variables más influyentes en el modelo
+plot(varImp(modelo3_LDA_es1))
+```
+
+Las tres **variables más importantes** para este modelo son **'nkill'**, **iyear'** y **'nwound'**.
+
+### Algoritmo 'LDA' para el escenario 2.
+
+Probamos el algoritmo LDA con el conjunto de datos dónde hay **variables recategorizadas**.
+```{r message=FALSE, warning=FALSE}
+#Creo la función de control con validación cruzada y así evitar el Overfiting
+control <- trainControl(
+  method = 'cv',
+  number = 5 
+
+)
+set.seed(7)
+modelo4_LDA_es2 <- train(
+  varObj ~ .,
+  data = train_es2,
+  method = 'lda',
+  metric = 'Accuracy',
+  trControl = control,
+  preProc = c('center', 'scale') #Escalamos los datos
+)
+```
+
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+print(modelo4_LDA_es2)
+```
+
+Con el data train obtenemos un accuracy del 88.88%
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+
+```{r}
+library(MLmetrics)
+
+prediciones_modelo4_LDA_es2 <- predict(modelo4_LDA_es2, newdata = test_es2)
+confusionMatrix(test_es2$varObj, prediciones_modelo4_LDA_es2, positive = "Yes")
+```
+Vemos como en test, tenemos un Accuracy del 88.8%, igual que el alcanzado en test, por que, **no** tenemos **overfitting**.
+
+Si observamos la matriz de confusión, podemos ver que de los 175 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 122 (hay 53 falsos positivos), de 38117 que son en realidad atentados exitosos, el modelo reconoce a 33906 (hay 4211 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **88.95%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **69.71%** (Recall - 'No: Especifidad). Con los **datos** del **escenario 2**, hemos conseguido **subir** la **capacidad** de **clasificar** los **atentados no exitosos**.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **79.33%** (Balanced Accuracy: Media de los 'Recall' en las dos clases), porcentaje más alto que el obtenido hasta entonces.
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión muy alta, **99.84%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **2%**. 
+
+Este **modelo**, ha **mejorado** en la **capacidad de reconocer** los **casos no exitosos**, **pero** la **precisión** en estos casos, es **muy baja** (2%). Son datos muy parecidos a los obtenidos por el segundo modelo del glm.
+
+- **Importancia de cada variable.**
+
+```{r}
+#Gráfico de las variables más influyentes en el modelo
+plot(varImp(modelo4_LDA_es2))
+```
+
+Las tres **variables más importantes** para este modelo son **'nkill'**, **iyear'** y **'nwound'**.
+
+## Algoritmo 'Ranger'
+
+A continuación, voy a utilizar el **método 'Ranger'** basado en **Random Forest**.
+
+Este tipo de algoritmos, es una **combinación** de **árboles de precisión**, tal que, cada árbol depende de los valores de un vector aleatorio probado independientemente y con la misma distribución para cada uno de estos.
+
+- **Ventajas**: 
+
+  - Es un algoritmo que **funciona muy bien** en problemas de **clasificación**.
+  
+  - Es **independiente** de las **transformaciones** sobre las **variables**.
+  
+  - **No** es **necesario estandarizar** los datos.
+  
+  - **Captura** muy bien las **interacciones** entre las variables. 
+  
+  - **Eficiente** en **bases** de **datos grandes**.
+  
+  - **Robusto** ante **outliers**.
+  
+  - Da **estimaciones** de qué **variables** son **importantes** en la                 clasificación.
+
+- **Incovenientes**: 
+
+  - **Tendencia** a **sobre-ajustar**, sobre todo si no se regularizan. A veces ,      es **mejor** quedarnos con **menos parámetros**, para no provocar que exista       overfiting.
+  
+  - La **clasificación** es **difícil** de **interpretar**.
+  
+### Algoritmo 'Ranger' para el escenario 1.
+
+```{r message=FALSE, warning=FALSE}
+#Introduzco cv para evitar overfitting
+train.control <- trainControl(method = "repeatedcv", number = 5,
+                              repeats = 5,
+                              returnResamp = "final", verboseIter = TRUE,                                        savePredictions = TRUE,
+                              allowParallel = TRUE)
+
+#Fijo la semilla
+set.seed(7)
+
+#En principio incluyo los mismos hiperparámetros anteriores (son los que vienen por defecto en 'ranger')
+hyperparameters <- expand.grid(mtry = 0,
+                               min.node.size = 0,
+                               splitrule = "gini")
+
+#Construyo el modelo a entrenar
+modelo5_ranger_es1  <- train(x = train_es1[,c(1:20)],
+                             y= train_es1$varObj,
+                             method = "ranger",
+                             tuneGrid = hyperparameters,
+                             metric = 'Accuracy',        
+                             importance= 'impurity', #Para poder ver qué variable                                discrimina mejor  
+                             trControl = train.control,
+                             num.trees = 5, #Número de árboles
+                             verbose = TRUE, 
+                             classification = TRUE,
+                             alpha = 1, #Modelo Lasso
+                             regularization.usedepth = TRUE)
+
+
+```
+
+
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+print(modelo5_ranger_es1)
+```
+
+El ajuste del modelo en train es del 92.13%
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+
+
+```{r}
+#Matriz de confusión y metricas del modelo en test
+prediciones_modelo5_ranger_es1 <- predict(modelo5_ranger_es1, test_es1)
+confusionMatrix(prediciones_modelo5_ranger_es1, test_es1$varObj,positive = "Yes" )
+```
+Vemos como en test, tenemos un Accuracy del 92.24%, mismo nivel que el alcanzado en test, por lo que, **no** tenemos **overfitting**.
+
+Si observamos la matriz de confusión, podemos ver que de los 4333 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 2209 (hay 2124 falsos positivos), de 33959 que son en realidad atentados exitosos, el modelo reconoce a 33113 (hay 846 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **97.51%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **50.98%** (Recall - 'No: Especifidad). Un porcentaje todavía bajo.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **74.24%** (Balanced Accuracy: Media de los 'Recall' en las dos clases).
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión muy alta, **93.97%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **72.31%**. Hemos conseguido **subir** la **fiabilidad** del modelo en **clasificar** los **atentados no exitosos**.
+
+Este **modelo**, ha **mejorado tanto** la **precisión** de reconocer** los **casos no exitosos**, aunque la capacidad todavía es muy baja (51%).
+
+Podemos observar que las **métricas** en los casos positivos, son bastantes **altas**, por lo que, habrá que tener especial cuidado de **no** llegar a **ocasionar overfitting**, para evitarlo  **controlaré** el **ajuste** de los **hiperparámetros** ('mtry', 'max_depth' y 'min.node.size')
+
+- **Importancia de cada variable.**
+
+```{r}
+#Gráfico de las variables más influyentes
+plot(varImp(modelo5_ranger_es1))
+```
+
+
+Las **tres** variables **más importantes**, con diferencia, para este modelo son: **'attacktype1'**, **'distancia'** y **'iyear'**, seguidas a un nivel menor, pero todavia por encima del 50%, **'nwound'**, **'nkill'** e **'iday'**.
+
+### Algoritmo 'Ranger' para el escenario 2.
+
+Ahora utilizaré el **mismo algoritmo** pero con los **datos** del **escenario 2**, dónde aparecen algunas de las variables numéricas recategorizadas.
+
+
+```{r message=FALSE, warning=FALSE}
+#Introduzco cv para evitar overfitting
+train.control <- trainControl(method = "repeatedcv", number = 5,
+                              repeats = 5,
+                              returnResamp = "final", verboseIter = TRUE,                                        savePredictions = TRUE,
+                              allowParallel = TRUE)
+
+#Fijo la semilla
+set.seed(7)
+
+#En principio incluyo los mismos hiperparámetros anteriores (son los que vienen por defecto en 'ranger')
+hyperparameters <- expand.grid(mtry = 0,
+                               min.node.size = 0,
+                               splitrule = "gini")
+
+#Construyo el modelo a entrenar
+modelo6_ranger_es2  <- train(x = train_es2[,c(1:20)],
+                             y= train_es2$varObj,
+                             method = "ranger",
+                             tuneGrid = hyperparameters,
+                             metric = 'Accuracy',        
+                             importance= 'impurity', #Para poder ver qué variable                                discrimina mejor  
+                             trControl = train.control,
+                             num.trees = 5, #Número de árboles
+                             verbose = TRUE, 
+                             classification = TRUE,
+                             alpha = 1, #Modelo Lasso
+                             regularization.usedepth = TRUE)
+```
+
+
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+print(modelo6_ranger_es2)
+```
+
+Con el data train obtenemos un accuracy del 92.17%
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+
+```{r}
+#Matriz de confusión y metricas del modelo en test
+prediciones_modelo6_ranger_es2 <- predict(modelo6_ranger_es2, test_es2)
+confusionMatrix(prediciones_modelo6_ranger_es2, test_es2$varObj,positive = "Yes" )
+```
+
+Vemos como en test, tenemos un Accuracy del 92.15%, mismo nivel que el alcanzado en test, por lo que, **no** tenemos **overfitting**.
+
+Si observamos la matriz de confusión, podemos ver que de los 4333 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 2209 (hay 2124 falsos positivos), de 33959 que son en realidad atentados exitosos, el modelo reconoce a 33078 (hay 881 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **97.41%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **50.98%** (Recall - 'No: Especifidad). Un porcentaje todavía bajo.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **74.19%** (Balanced Accuracy: Media de los 'Recall' en las dos clases), porcentaje muy parecido alcanzado con el modelo ranger y con los datos del escenario 1.
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión muy alta, **93.97%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **71.49%**. Mantenemos, la **fiabilidad** del modelo en **clasificar** los **atentados no exitosos**, respecto al modelo anterior con el escenario 1.
+
+Con los datos del escenario 2, no hemos conseguido mejorar el nivel de predicción, respecto a los modelos anteriores.
+
+- **Importancia de cada variable.**
+```{r}
+#Gráfico de las variables más influyentes
+plot(varImp(modelo6_ranger_es2))
+```
+Las **tres** variables **más importantes**, con diferencia, para este modelo son: **'attacktype1'**, **'distancia'** y **'iyear'**, seguidas a un nivel menor, pero todavia por encima del 50%, **'nwound'** y **'nkill'**.
+
+
+### Algoritmo 'Ranger' con grid-search para el escenario 1.
+
+Aplico un grid-search en ciertos parámetros del algoritmo Ranger.
+
+```{r message=FALSE, warning=FALSE}
+#Introduzco cv para evitar overfitting
+train.control <- trainControl(method = "repeatedcv", number = 5,
+                              repeats = 5,
+                              returnResamp = "final", verboseIter = TRUE,                                        savePredictions = TRUE,
+                              allowParallel = TRUE)
+
+#En principio incluyo los mismos hiperparámetros anteriores (son los que vienen por defecto en 'ranger')
+hyperparameters <- expand.grid(mtry = c(5, 6, 7),
+                               min.node.size = c(1, 3, 5),
+                               splitrule = "gini")
+#Fijo la semilla
+set.seed(7)
+
+#Construyo el modelo a entrenar
+modelo7_ranger_grid_es1  <- train(x = train_es1[,c(1:20)],
+                             y= train_es1$varObj,
+                             method = "ranger",
+                             tuneGrid = hyperparameters,
+                             metric = 'Accuracy',        
+                             importance= 'impurity', #Para poder ver qué variable                                discrimina mejor  
+                             trControl = train.control,
+                             alpha = 1,
+                             max.depth = 5,
+                             num.trees = 100, #Número de árboles
+                             verbose = TRUE, 
+                             classification = TRUE,
+                             regularization.usedepth = TRUE)
+
+
+```
+
+```{r}
+# assess top 10 models
+print(modelo7_ranger_grid_es1)
+```
+Vemos que los parámetros más óptimos para este modelo son mtry = 7 y min.node.size = 3
+
+Por lo que, introduciré estos parámetros de nuevo en el Algoritmo.
+
+```{r message=FALSE, warning=FALSE}
+#Fijo la semilla
+set.seed(7)
+
+#Construyo el modelo a entrenar
+modelo7_ranger_grid_es1 <- ranger(
+  varObj ~ .,
+  data = train_es1,
+  num.trees = 100,
+  max.depth = 5,
+  mtry = 7,
+  alpha = 1, #Modelo Lasso
+  importance = 'impurity',
+  write.forest = TRUE,
+  min.node.size = 3,
+  splitrule = 'gini',
+  verbose = TRUE,
+  classification = TRUE,
+  regularization.usedepth = TRUE
+)
+```
+
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+print(modelo7_ranger_grid_es1)
+```
+
+Con este modelo obtengo una capacidad predictiva, con los datos de train, del 88.97% 
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+
+```{r}
+#Matriz de confusión y metricas del modelo en test
+prediciones_modelo7_ranger_grid_es1 <- predict(modelo7_ranger_grid_es1, test_es1)
+confusionMatrix(prediciones_modelo7_ranger_grid_es1$predictions, test_es1$varObj,positive = "Yes" )
+```
+
+En test, tenemos un Accuracy del 88.86%, mismo nivel que el alcanzado en test, por lo que, **no** tenemos **overfitting**.
+
+Si observamos la matriz de confusión, podemos ver que de los 4333 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 79 (hay 4254 falsos positivos), de 33959 que son en realidad atentados exitosos, el modelo reconoce a 33953 (hay 6 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **99.98%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **1%!!** (Recall - 'No: Especifidad). Un porcentaje **demasiado bajo**.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **50%** (Balanced Accuracy: Media de los 'Recall' en las dos clases), es decir, clasifica muy bien los atentados exitosos y nada los no exitosos.
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión del **88.86%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **92%**. Pero no debemos tenerlo en cuenta, ya que sólo ha sido capaz de clasificar el 1% de los no exitosos.
+
+Este **modelo sólo clasifica bien** los atentados exitosos, y no es capaz de clasificar los atentados no exitosos.
+
+- **Importancia de cada variable.**
+```{r}
+#Variables más importantes del modelo
+library(ggpubr)
+vars_imp <- modelo7_ranger_grid_es1$variable.importance
+vars_imp <- as.data.frame(vars_imp)
+vars_imp$myvar <- row.names(vars_imp)
+vars_imp <- as.data.table(vars_imp)
+setorder(vars_imp,-vars_imp)
+ggbarplot(vars_imp[1:10],
+          x = 'myvar',
+          y = 'vars_imp',
+          color = 'blue',
+          palette = 'jco',
+          sort.val = 'asc',
+          sort.by.groups = FALSE,
+          x.text.angle = 90,
+          ylab = 'Importancia',
+          xlab = 'Variable',
+          rotate = TRUE,
+          ggtheme = theme_minimal()
+)
+```
+
+Las variables más influyentes del modelo son: **'attacktype1'**, **'nkill'** y **'nwound'**.
+
+### Algoritmo 'Ranger' con grid-search para el escenario 2.
+
+A continuación,voy a utilizar el mismo algoritmo anterior, con grid research y para el conjunto de datos del escenario 2.
+
+```{r message=FALSE, warning=FALSE}
+#Introduzco cv para evitar overfitting
+train.control <- trainControl(method = "repeatedcv", number = 5,
+                              repeats = 5,
+                              returnResamp = "final", verboseIter = TRUE,                                        savePredictions = TRUE,
+                              allowParallel = TRUE)
+
+#En principio incluyo los mismos hiperparámetros anteriores (son los que vienen por defecto en 'ranger')
+hyperparameters <- expand.grid(mtry = c(5, 6, 7),
+                               min.node.size = c(1, 3, 5),
+                               splitrule = "gini")
+#Fijo la semilla
+set.seed(7)
+#Construyo el modelo a entrenar
+modelo8_ranger_grid_es2  <- train(x = train_es2[,c(1:20)],
+                             y= train_es2$varObj,
+                             method = "ranger",
+                             tuneGrid = hyperparameters,
+                             metric = 'Accuracy',        
+                             importance= 'impurity', #Para poder ver qué variable                                discrimina mejor  
+                             trControl = train.control,
+                             alpha = 1,
+                             max.depth = 5,
+                             num.trees = 100, #Número de árboles
+                             verbose = TRUE, 
+                             classification = TRUE,
+                             regularization.usedepth = TRUE)
+
+```
+
+```{r}
+# assess top 10 models
+print(modelo8_ranger_grid_es2)
+```
+Vemos que los parámetros más óptimos para este modelo son mtry = 7 y min.node.size = 5
+
+Por lo que, introduciré estos parámetros de nuevo en el Algoritmo.
+
+```{r message=FALSE, warning=FALSE}
+#Fijo la semilla
+set.seed(7)
+
+#Construyo el modelo a entrenar
+modelo8_ranger_grid_es2 <- ranger(
+  varObj ~ .,
+  data = train_es2,
+  num.trees = 100,
+  max.depth = 5,
+  mtry = 7,
+  alpha = 1, #Modelo Lasso
+  importance = 'impurity',
+  write.forest = TRUE,
+  min.node.size = 5,
+  splitrule = 'gini',
+  verbose = TRUE,
+  classification = TRUE,
+  regularization.usedepth = TRUE
+)
+```
+
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+print(modelo8_ranger_grid_es2)
+```
+Con este modelo obtengo una capacidad predictiva, con los datos de train, del 89.51%  
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+
+```{r}
+#Matriz de confusión y metricas del modelo en test
+prediciones_modelo8_ranger_grid_es2 <- predict(modelo8_ranger_grid_es2, test_es2)
+confusionMatrix(prediciones_modelo8_ranger_grid_es2$predictions, test_es2$varObj,positive = "Yes" )
+```
+
+En test, tenemos un Accuracy del 89.4%, mismo nivel que el alcanzado en test, por lo que, **no** tenemos **overfitting**.
+
+Si observamos la matriz de confusión, podemos ver que de los 4333 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 319 (hay 4014 falsos positivos), de 33959 que son en realidad atentados exitosos, el modelo reconoce a 33923 (hay 36 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **99.89%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **7%!!** (Recall - 'No: Especifidad). Un porcentaje **demasiado bajo**, aunque con estos datos (escenario 2), hemos mejorado muy poco respecto al modelo anterior.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **53%** (Balanced Accuracy: Media de los 'Recall' en las dos clases).
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión del **89.41%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **89.85%**. Pero no debemos tenerlo en cuenta, ya que sólo ha sido capaz de clasificar el 7% de los no exitosos.
+
+Este **modelo sólo clasifica bien** los atentados exitosos, y no es capaz de clasificar los atentados no exitosos.
+
+- **Importancia de cada variable.**
+```{r}
+#Variables más importantes del modelo
+library(ggpubr)
+vars_imp <- modelo8_ranger_grid_es2$variable.importance
+vars_imp <- as.data.frame(vars_imp)
+vars_imp$myvar <- row.names(vars_imp)
+vars_imp <- as.data.table(vars_imp)
+setorder(vars_imp,-vars_imp)
+ggbarplot(vars_imp[1:10],
+          x = 'myvar',
+          y = 'vars_imp',
+          color = 'blue',
+          palette = 'jco',
+          sort.val = 'asc',
+          sort.by.groups = FALSE,
+          x.text.angle = 90,
+          ylab = 'Importancia',
+          xlab = 'Variable',
+          rotate = TRUE,
+          ggtheme = theme_minimal()
+)
+```
+
+Las variables más influyentes para este modelo son: **'attacktype1'**, **'nkill'**, **'nwound'** e **'iyear'**, siendo las dos primeras las más influyentes con diferencia respecto a las demás variables predictoras.
+
+***
+
+# Mundo H2O.
+
+A continuación, utilizaré diferentes algoritmos pertenecientes a la libreria H2O, con el fin de encontrar un modelo que mejore las bondades de ajuste de los modelos anteriores.
+
+```{r message=FALSE, warning=FALSE}
+#Arrancamos el entorno h2o
+h2o.init(nthreads = 6, max_mem_size = '10G')
+```
+
+```{r}
+options(java.parameters = "-Xmx1024m")
+```
+
+```{r}
+#To speedup transformations
+options('h2o.use.data.table' = TRUE)
+```
+
+## Train/Test H2O
+
+Transformo el data.table en objeto h2o y creo los conjuntos en Train,Test, tanto para el escenario 1 como para el escenario 2.
+
+```{r}
+#Transformo en objeto h2o el conjunto de datos del escenario 1
+datMod_es1_hex <- as.h2o(datMod_es1, destination_frame = 'datMod_es1_hex')
+```
+
+```{r}
+#Transformo en objeto h2o el conjunto de datos del escenario 2
+datMod_es2_hex <- as.h2o(datMod_es2, destination_frame = 'datMod_es2_hex')
+```
+
+A continuación, realizo las particiones en h2o, para los conjuntos de datos train, validación y test, tanto para el primer escenario como para el segundo escenario.
+
+```{r}
+#Particiones para train/validation/test en escenario 1
+splits_es1 <- h2o.splitFrame(
+  data = datMod_es1_hex,
+  ratios = c(0.6, 0.2),
+  destination_frames = c('train_es1_hex', 'valid_es1_hex', 'test_es1_hex'),
+  seed = 1234
+)
+train_es1_hex <- splits_es1[[1]]
+valid_es1_hex <- splits_es1[[2]]
+test_es1_hex <- splits_es1[[3]]
+```
+
+```{r}
+#Particiones para train/validation/test en escenario 2
+splits_es2 <- h2o.splitFrame(
+  data = datMod_es2_hex,
+  ratios = c(0.6, 0.2),
+  destination_frames = c('train_es2_hex', 'valid_es2_hex', 'test_es2_hex'),
+  seed = 1234
+)
+train_es2_hex <- splits_es2[[1]]
+valid_es2_hex <- splits_es2[[2]]
+test_es2_hex <- splits_es2[[3]]
+```
+
+Identifico tanto las variables predictoras como la variable objetivo en ambos escenarios.
+
+```{r}
+#Identifico variables predictoras y objetivo para el conjunto de datos del escenario 1
+y_es1 <- "varObj"
+x_es1 <- setdiff(names(train_es1_hex), y_es1) 
+#Para clasificación binaria la variable objetivo debe ser factor
+train_es1_hex[ ,y_es1] <- as.factor(train_es1_hex[ ,y_es1])
+```
+
+```{r}
+#Identifico variables predictoras y objetivo para el conjunto de datos del escenario 2
+y_es2 <- "varObj"
+x_es2 <- setdiff(names(train_es2_hex), y_es2) 
+#Para clasificación binaria la variable objetivo debe ser factor
+train_es2_hex[ ,y_es2] <- as.factor(train_es2_hex[ ,y_es2])
+```
+
+## Algoritmo Automl
+
+Este algoritmo esta basado en el **aprendizaje automático automatizado**. Y nos servirá como **modelo base** fijándonos en sus parámetros, para poder utilizarlos en los siguientes algoritmos, con el fin de ir optimizarlos y así mejorar el nivel de predicción de los siguientes modelos.
+
+- **Ventajas**:
+
+  - **No** necesita una **preparación** exahustiva de las **variables**.
+  
+  - No necesita ajuste sobre los algoritmos, ya que, **proporciona** un **ajuste       automático** de **parámetros** .
+  
+  - Puede servir como **referencia** para **trabajar a partir** de él mirando **sus     parámetros**.
+  
+- **Incovenientes**: 
+
+  - Nos devuelve un **modelo básico** con el que **hay** que trabajar a posteriori     para poder **optimizar** los resultados.
+  
+  - En **ocasiones**, el **mejor modelo** dado por este algoritmo es un **modelo       ensamblado aplidado**, formado por un conjunto de algoritmos**, por lo que         será una tarea **dificil** y complicada **interpretar** la **importancia** de      las **variables** dentro del modelo. 
+  
+```{r message=FALSE, warning=FALSE}
+#Fijo la semilla
+set.seed(7)
+#Entreno el modelo automl para el escenario 1 con los datos de train y validación.
+aml <- h2o.automl(
+  x = x_es1,
+  y = y_es1,
+  training_frame = train_es1_hex,
+  validation_frame = valid_es1_hex,
+  max_models = 5, #para que ejecute como máximo 5 modelos
+  balance_classes = TRUE, #las clases no están balancedadas
+  stopping_metric = 'AUTO',
+  stopping_rounds = 3,
+  sort_metric = 'AUTO',
+  nfolds = 5, #Para evitar overfitting
+  verbosity = 'info',
+  seed = 7
+)
+
+```
+
+```{r}
+#View the automl leaderboard
+lb <- aml@leaderboard
+print(lb, n=nrow(lb))
+```
+
+El modelo **ganador**, es un **Modelo 'StackedEnsemble'**, es un algoritmo que **recoje un conjunto de algoritmos apilados**, para obtener un mejor rendimiento. Éstos admiten regresión, clasificación binaria y clasificación multiclase. 
+
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train/Validación
+modelo9_automl <- aml@leader
+modelo9_automl
+```
+
+Podemos ver cómo el nivel de recall/Precisión (**AUCPR**) en train es del cómo en validación es bastante elevado, pero prácticamente iguales, **99.71% en train** y en **validación del 98.91** 
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+```{r}
+h2o.performance(modelo9_automl, newdata = test_es1_hex)
+```
+
+En test, tenemos un AUCPR del 98.77%, mismo nivel que el alcanzado en validación, y parecido al de train (99.71%), por lo que, **no** tenemos **overfitting**.
+
+Si observamos la matriz de confusión, podemos ver que de los 3220 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 2444 (hay 776 falsos positivos), de 35019 que son en realidad atentados exitosos, el modelo reconoce a 33041 (hay 1978 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **94.35%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **75.90%** (Recall - 'No: Especifidad). Un porcentaje **bastante bueno**.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **85.12%** (Balanced Accuracy: Media de los 'Recall' en las dos clases).
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión del **97.70%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **55.26%**. 
+
+Este **modelo clasifica bien** los **atentados no exitosos**, **pero** la **precisión no es muy buena**, sólo un **55.26%**, con lo que en este caso (atentados no exitosos), no es veraz. **En** el **caso** de los **atentados exitosos**, los **clasifica muy bien** y **además** con **una alta precisión** (97.70%).
+
+Ahora me fijaré en los **parámetros obtenidos** por el **primer algoritmo ** ('StackedEnsemble_AllModels_AutoML_20210925_122859'). 
+
+```{r}
+parametros <- modelo9_automl@allparameters
+parametros$base_models
+```
+Puedo ver que en el modelo ensamblado ha utilizado algortimos 'GBM', 'DRF' y 'GLM'.
+
+- **Importancia de cada variable.**
+
+Al ser un modelo ensamablado, **no** se podrán obtener las **variables más importantes**. 
+
+Dado que para 'Negocio' sería importante conocer las variables más importantes para la predición del éxito ó fracaso de un atentado, **no** tendré en cuenta este **modelo** para la elección del mejor modelo.
+
+
+## Algoritmo ‘GBM’ (Gradient Boosting Machine)
+
+Gradient Boosting Machine (GBM) es una generalización del modelo de Boosting Machine que permite aplicar el **método** de **descenso** de **gradiente** para **optimizar** cualquier **función de coste** durante el ajuste del modelo.
+
+El **valor predicho** por un modelo GBM es la **agregación** de las **predicciones** de **todos** los **modelos** individuales que forman el **ensamble**.
+
+El ensamble se realiza de forma secuencial, de forma que cada nuevo modelo que se incorpora al conjunto intenta corregir los errores de los anteriores modelos. Como resultado de la combinación de múltiples modelos, Boosting Machine consigue **aprender** **relaciones no lineales** **entre** la variable **respuesta** y los **predictores**.
+
+- **Ventajas**:
+
+  - A menudo proporciona una **precisión** de predicción **insuperable**.
+  
+  - Proporciona **mucha flexibilidad**: se puede optimizar diferentes funciones de     pérdida y proporciona varias opciones de ajuste de hiperparámetros.
+  
+  - **No** se **requiere procesamiento** previo de datos, a menudo funciona muy        bien con valores categóricos y numéricos tal cual.
+  
+- **Incovenientes**: 
+
+  - Los GBM seguirán mejorando para minimizar todos los errores. Esto puede            enfatizar demasiado los valores atípicos y **provocar** un **ajuste excesivo**.     Para ello se debe **utilizar** la **validación cruzada** para neutralizar.
+  
+  - A menudo requieren muchos árboles, por lo que neceistarán mucho **tiempo y          memoria**.
+  
+  - La alta flexibilidad, da como resultado **muchos parámetros** que interactúan e     **influyen** en gran medida en el **comportamiento** del **enfoque** (número de     iteraciones, profundidad del árbol, parámetros de regularización, etc.). Esto       requiere una gran búsqueda de cuadrícula durante el tuneado.
+
+### Algoritmo 'GBM' para el escenario 1
+
+```{r message=FALSE, warning=FALSE}
+#Fijo la semilla
+set.seed(7)
+#Entreno el modelo gbm para el escenario 1 con los datos de train
+modelo10_gbm_es1 <- h2o.gbm(
+  x = x_es1,
+  y = y_es1,
+  training_frame = train_es1_hex,
+  validation_frame = valid_es1_hex,
+  nfolds = 5, #Número de campos para la validación cruzada.
+  keep_cross_validation_predictions = TRUE,
+  keep_cross_validation_fold_assignment = TRUE,
+  score_each_iteration = TRUE,
+  score_tree_interval = 5, #Número de árboles tras los que se evalúa el modelo.
+  fold_assignment = 'Modulo', #Forma determinista simple de dividir uniformemente el conjunto de datos.
+  balance_classes = TRUE, #La variable objetivo no está balanceada por lo tanto balanceamos las clases.
+  ntrees = 100, #Número de árboles
+  max_depth = 15, #Profundidad máxima de los árboles(número de nodos)
+  #Evitamos sobre ajuste
+  stopping_tolerance = 0.01, #Porcentaje mínimo de mejora entre dos mediciones consecutivas
+  stopping_rounds=3, #Número de mediciones consecutivas en las que no se debe superar el stopping_tolerance.
+  stopping_metric="AUCPR",
+  distribution = 'bernoulli',
+  sample_rate = 0.8,#Porcentaje de observaciones aleatorias empleadas para el ajuste de cada árbol 
+  learn_rate = 0.001,#Cuanto más pequeño es el valor de learning rate, más lentamente aprende el modelo, se reduce el riesgo de overfitting.
+  huber_alpha = 0.8, #Umbral entre la pérdida cuadrática y lineal.
+  seed = 7
+)
+
+```
+
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+set.seed(7)
+print(modelo10_gbm_es1)
+```
+Hemos obtenido un **AUCPR** en **train** del **97.19%** y un **98.51%** con los datos de **validación**. 
+
+Si observamos las métricas obtenidas **en** cada **cruce de validación**, podemos ver que el **AUC_PR medio** es de **98.24**, con una **desviación típica** del **0.001**, es decir, el nivel de predicción se mantiene en un 98%. Por lo que, **no** me hace pensar que pueda existir **sobreajuste**, aún así debemos de ver el nivel de predicción en test.
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+
+```{r}
+set.seed(7)
+h2o.performance(modelo10_gbm_es1, newdata = test_es1_hex)
+```
+
+Vemos como la precisión del modelo se sitúa en los **datos** de **test** en torno al **98.32%** (parecido a los datos anteriores), lo que indica que el modelo generaliza bien.
+
+- **Matriz de confusión.**
+
+```{r}
+#Obtengo la matriz de confusión en test
+h2o.confusionMatrix(modelo10_gbm_es1, newdata = test_es1_hex, metric = 'accuracy')
+```
+
+
+Si observamos la matriz de confusión, podemos ver que de los 2632 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 2046 (hay 586 falsos positivos), de 35607 que son en realidad atentados exitosos, el modelo reconoce a 33231 (hay 2376 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **93.32%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **77.73%** (Recall - 'No: Especifidad). Un porcentaje **bastante bueno**.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **85.52%** (Balanced Accuracy: Media de los 'Recall' en las dos clases).
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión del **98.26%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **46.26%**. No es un porcentaje muy alto.
+
+Este **modelo sólo clasifica muy bien** los atentados exitosos y no exitosos, pero la precisón de estos últimos no es muy alta (46.26%).
+
+
+- **Importancia de cada variable.**
+```{r}
+h2o.varimp_plot(modelo10_gbm_es1)
+```
+Las variables más importantes para este modelo son: **'nikill'**, **'nwound'** y **'attacktype1'**, **'iyear'** y **nkillter**, siendo **'nkill'** la variable más influyente con diferencia.
+
+### Algoritmo 'GBM' para el escenario 2
+
+A continuación, utilizo el mismo algoritmo anterior pero con los datos del escenario 2.
+
+```{r message=FALSE, warning=FALSE}
+#Fijo la semilla
+set.seed(7)
+#Entreno el modelo gbm para el escenario 1 con los datos de train
+modelo11_gbm_es2 <- h2o.gbm(
+  x = x_es2,
+  y = y_es2,
+  training_frame = train_es2_hex,
+  validation_frame = valid_es2_hex,
+  nfolds = 5, #Número de campos para la validación cruzada.
+  keep_cross_validation_predictions = TRUE,
+  keep_cross_validation_fold_assignment = TRUE,
+  score_each_iteration = TRUE,
+  score_tree_interval = 5, #Número de árboles tras los que se evalúa el modelo.
+  fold_assignment = 'Modulo', #Forma determinista simple de dividir uniformemente el conjunto de datos.
+  balance_classes = TRUE, #La variable objetivo no está balanceada por lo tanto balanceamos las clases.
+  ntrees = 100, #Número de árboles
+  max_depth = 15, #Profundidad máxima de los árboles(número de nodos)
+  #Evitamos sobre ajuste
+  stopping_tolerance = 0.01, #Porcentaje mínimo de mejora entre dos mediciones consecutivas
+  stopping_rounds=3, #Número de mediciones consecutivas en las que no se debe superar el stopping_tolerance.
+  stopping_metric="AUCPR",
+  distribution = 'bernoulli',
+  sample_rate = 0.8,#Porcentaje de observaciones aleatorias empleadas para el ajuste de cada árbol 
+  learn_rate = 0.001,#Cuanto más pequeño es el valor de learning rate, más lentamente aprende el modelo, se reduce el riesgo de overfitting.
+  huber_alpha = 0.8, #Umbral entre la pérdida cuadrática y lineal.
+  seed = 7
+)
+
+```
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+set.seed(7)
+print(modelo11_gbm_es2)
+```
+
+Con este modelo y teniendo en cuenta los **datos** del **escenario 2**, obtenemos un porcentaje del **'AUCPR'** del **97.51%** en train y un **98.58%** con los **datos** de **validación**.
+
+Si observamos las métricas obtenidas en la fase de validación cruzada, podemos ver que el **nivel** de **predicción medio** es del **98.36%**, con una **desviación típica** del **0.0001**. Por lo que, el nivel de predicción se **mantiene** en un **98%**.
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+
+```{r}
+set.seed(7)
+h2o.performance(modelo11_gbm_es2, newdata = test_es2_hex)
+```
+
+Vemos como la precisión del modelo se sitúa en los **datos** de **test** en torno al **98.28%** (al igual que con los datos de validación), lo que indica que el modelo generaliza bien, y además, obtenemos una **bondad de ajuste** bastante **bueno**.
+
+- **Matriz de confusión.**
+```{r}
+#Obtengo la matriz de confusión en test
+h2o.confusionMatrix(modelo11_gbm_es2, newdata = test_es2_hex, metric = 'accuracy')
+```
+
+Si observamos la matriz de confusión, podemos ver que de los 2869 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 2161 (hay 708 falsos positivos), de 35370 que son en realidad atentados exitosos, el modelo reconoce a 33109 (hay 2261 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **93.60%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **75.32%** (Recall - 'No: Especifidad). Un porcentaje **bastante bueno**.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **84.46%** (Balanced Accuracy: Media de los 'Recall' en las dos clases).
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión del **97.90%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **49%**. No es un porcentaje muy alto, aunque sí es el **mayor** que hemos alcandado **por el momento**, sin contar el modelo generado por 'automl'.
+
+Si comparamos este modelo con el mismo pero con los datos del escenario 1, los datos son muy parecidos, con este modelo ganamos un poco más en precisión para  reconocer los casos negativos, 49% (escenario 1: 46%).
+
+- **Importancia de cada variable.**
+```{r}
+h2o.varimp_plot(modelo11_gbm_es2)
+```
+Las variables más importantes en este  caso, son: **'nkill'**, **'iyear'**, **'nwound'** y **'attacktype'**, siendo **'nkill'** la **más influyente** con diferencia.
+
+### Algoritmo 'GBM' con grid-search para el escenario 1
+
+```{r message=FALSE, warning=FALSE}
+#Rangos de los parámetros que busco
+hyper_params = list(
+  max_depth = seq(5,10,15),
+  sample_rate = seq(0.5,1,0.01),#Porcentaje de observaciones aleatorias empleadas para el ajuste de cada árbol
+  col_sample_rate = seq(0.8,1,0.01)
+)
+search_criteria = list(
+  strategy = "RandomDiscrete",
+  max_models = 100,
+  stopping_rounds = 5,
+  stopping_metric = "AUCPR",
+  stopping_tolerance = 0.0053
+)
+
+#Fijo la semilla
+set.seed(7)
+
+ grid_gbm <- h2o.grid(
+  hyper_params = hyper_params,
+  search_criteria = search_criteria,
+  algorithm = "gbm",
+  grid_id = "gbm_grid",
+  x = x_es1,
+  y = y_es1,
+  training_frame = train_es1_hex,
+  validation_frame = valid_es1_hex,
+  nfolds = 5, #Número de campos para la validación cruzada.
+  keep_cross_validation_predictions = TRUE,
+  keep_cross_validation_fold_assignment = TRUE,
+  score_each_iteration = TRUE,
+  score_tree_interval = 5, #Número de árboles tras los que se evalúa el modelo.
+  fold_assignment = 'Modulo', #Forma determinista simple de dividir uniformemente el conjunto de datos.
+  balance_classes = TRUE, #La variable objetivo no está balanceada por lo tanto balanceamos las clases.
+  ntrees = 100, #Número de árboles
+  learn_rate = 0.001,#Cuanto más pequeño es el valor de learning rate, más lentamente aprende el modelo, se reduce el riesgo de overfitting.
+  distribution = 'bernoulli',
+  huber_alpha = 0.8, #Umbral entre la pérdida cuadrática y lineal.
+  seed = 7
+)
+``` 
+Selecciono el modelo que ha obtenido un mayor porcentaje de AUCPR:
+
+```{r}
+gbm_grid_ganador_es1 <- h2o.getGrid(grid_id = "gbm_grid", 
+                             sort_by = "AUCPR", 
+                             decreasing = TRUE)
+print(gbm_grid_ganador_es1)
+```
+De los once modelos que se han generado con los parámetros indicados. Me quedaré con el que ha obtenido mayor valor en aucpr, el modelo gbm_grid_model_11, con un 97.98%.
+
+Estos parámetros son: 
+
+- col_sample_rate: 0.81
+
+- max_depth: 5
+
+- sample_rate: 0.52
+
+Con el fin de ahorrar tiempo de computación, incluiré estos parámetros manualmente en el algoritmo.
+
+```{r message=FALSE, warning=FALSE}
+#Me quedo con el modelo de mayor AUCPR
+#modelo12_gbm_grid_es1_id <- grid_gbm@model_ids[[1]]
+#modelo12_gbm_grid_es1 <- h2o.getModel(modelo12_gbm_grid_es1_id)
+#Fijo la semilla
+set.seed(7)
+#Entreno el modelo gbm para el escenario 1 con los datos de train
+modelo12_gbm_grid_es1 <- h2o.gbm(
+  x = x_es1,
+  y = y_es1,
+  training_frame = train_es1_hex,
+  validation_frame = valid_es1_hex,
+  nfolds = 5, #Número de campos para la validación cruzada.
+  keep_cross_validation_predictions = TRUE,
+  keep_cross_validation_fold_assignment = TRUE,
+  score_each_iteration = TRUE,
+  score_tree_interval = 5, #Número de árboles tras los que se evalúa el modelo.
+  fold_assignment = 'Modulo', #Forma determinista simple de dividir uniformemente el conjunto de datos.
+  balance_classes = TRUE, #La variable objetivo no está balanceada por lo tanto balanceamos las clases.
+  ntrees = 100, #Número de árboles
+  #Evitamos sobre ajuste
+  stopping_tolerance = 0.01, #Porcentaje mínimo de mejora entre dos mediciones consecutivas
+  stopping_rounds=3, #Número de mediciones consecutivas en las que no se debe superar el stopping_tolerance.
+  stopping_metric="AUCPR",
+  distribution = 'bernoulli',
+  learn_rate = 0.001,#Cuanto más pequeño es el valor de learning rate, más lentamente aprende el modelo, se reduce el riesgo de overfitting.
+  huber_alpha = 0.8, #Umbral entre la pérdida cuadrática y lineal.
+  max_depth = 5,
+  sample_rate = 0.52,#Porcentaje de observaciones aleatorias empleadas para el ajuste de cada árbol
+  col_sample_rate = 0.81,
+  set.seed(7)
+)
+
+```
+
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+set.seed(7)
+print(modelo12_gbm_grid_es1)
+```
+Con este modelo obtenemos un porcentaje de **'AUCPR'** del **87.43%** en los datos de train y un **98%** con los **datos** de **validación**.
+
+Si observamos las métricas obtenidas en la fase de validación cruzada, podemos ver que el **nivel** de **predicción medio** es del **97.89%**, con una **desviación típica** del **0.0006**. 
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+
+```{r}
+set.seed(7)
+h2o.performance(modelo12_gbm_grid_es1, newdata = test_es1_hex)
+```
+Vemos como la precisión del modelo se sitúa en los **datos** de **test** en un  **97.83%** (al mismo nivel que con los datos de validación: 98%, lo que indica que el modelo generaliza bien.
+
+- **Matriz de confusión.**
+```{r}
+#Obtengo la matriz de confusión en test
+h2o.confusionMatrix(modelo12_gbm_grid_es1, newdata = test_es1_hex, metric = 'accuracy')
+```
+
+Si observamos la matriz de confusión, podemos ver que de los 1110 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 907 (hay 203 falsos positivos), de 37129 que son en realidad atentados exitosos, el modelo reconoce a 33614 (hay 3515 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **90.53%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **81.71%** (Recall - 'No: Especifidad). Un porcentaje **bueno**.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **86.12%** (Balanced Accuracy: Media de los 'Recall' en las dos clases).
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión del **99.39%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **20.51%**. Es un porcentaje **muy bajo**.
+
+Este **modelo sólo clasifica muy bien** los atentados exitosos y no exitosos, pero la **precisón** de estos últimos es **bastante baja** (22%).
+
+- **Importancia de cada variable.**
+```{r}
+h2o.varimp_plot(modelo12_gbm_grid_es1)
+```
+Las variables más importantes para el modelo serían: **'nkill'** y **'attacktype1'**, ambas por encima del 50%, siendo nkill, la más influyente con diferencia.
+
+### Algoritmo 'GBM' con grid-search para el escenario 2
+
+Ahora realizaré un grid-research sobre el mismo algortimo anterior, pero con los datos del escenario 2.
+
+```{r message=FALSE, warning=FALSE}
+#Rangos de los parámetros que busco
+hyper_params = list(
+  max_depth = seq(5,20,30),
+  sample_rate = seq(0.5,1,0.01),#Porcentaje de observaciones aleatorias empleadas para el ajuste de cada árbol
+  col_sample_rate = seq(0.8,1,0.01)
+)
+search_criteria = list(
+  strategy = "RandomDiscrete",
+  max_models = 100,
+  stopping_rounds = 5,
+  stopping_metric = "AUCPR",
+  stopping_tolerance = 0.0053
+)
+
+#Fijo la semilla
+set.seed(7)
+
+grid_gbm_es2 <- h2o.grid(
+  hyper_params = hyper_params,
+  search_criteria = search_criteria,
+  algorithm = "gbm",
+  grid_id = "gbm_grid_es2",
+  x = x_es2,
+  y = y_es2,
+  training_frame = train_es2_hex,
+  validation_frame = valid_es2_hex,
+  nfolds = 5, #Número de campos para la validación cruzada.
+  keep_cross_validation_predictions = TRUE,
+  keep_cross_validation_fold_assignment = TRUE,
+  score_each_iteration = TRUE,
+  score_tree_interval = 5, #Número de árboles tras los que se evalúa el modelo.
+  fold_assignment = 'Modulo', #Forma determinista simple de dividir uniformemente el conjunto de datos.
+  balance_classes = TRUE, #La variable objetivo no está balanceada por lo tanto balanceamos las clases.
+  ntrees = 100, #Número de árboles
+  learn_rate = 0.001,#Cuanto más pequeño es el valor de learning rate, más lentamente aprende el modelo, se reduce el riesgo de overfitting.
+  distribution = 'bernoulli',
+  huber_alpha = 0.8, #Umbral entre la pérdida cuadrática y lineal.
+  seed = 7
+)
+``` 
+Selecciono el modelo que ha obtenido un mayor porcentaje de AUCPR:
+
+```{r}
+set.seed(7)
+gbm_grid_ganador_es2 <- h2o.getGrid(grid_id = "gbm_grid_es2", 
+                             sort_by = "AUCPR", 
+                             decreasing = TRUE)
+print(gbm_grid_ganador_es2)
+```
+
+De los once modelos que se han generado con los parámetros indicados. Me quedaré con el que ha obtenido mayor valor en aucpr, el modelo gbm_grid_es2_model_5, con un 98.37%.
+
+Estos parámetros son: 
+
+- col_sample_rate: 0.83
+
+- max_depth: 5
+
+- sample_rate: 0.75
+
+Con el fin de ahorrar tiempo de computación, incluiré estos parámetros manualmente en el algoritmo.
+
+
+```{r message=FALSE, warning=FALSE}
+#Me quedo con el modelo de mayor AUCPR
+#modelo13_gbm_grid_es2_id <- grid_gbm_es2@model_ids[[1]]
+#modelo13_gbm_grid_es2 <- h2o.getModel(modelo13_gbm_grid_es2_id)
+#Fijo la semilla
+set.seed(7)
+#Entreno el modelo gbm para el escenario 1 con los datos de train
+modelo13_gbm_grid_es2 <- h2o.gbm(
+  x = x_es2,
+  y = y_es2,
+  training_frame = train_es2_hex,
+  validation_frame = valid_es2_hex,
+  nfolds = 5, #Número de campos para la validación cruzada.
+  keep_cross_validation_predictions = TRUE,
+  keep_cross_validation_fold_assignment = TRUE,
+  score_each_iteration = TRUE,
+  score_tree_interval = 5, #Número de árboles tras los que se evalúa el modelo.
+  fold_assignment = 'Modulo', #Forma determinista simple de dividir uniformemente el conjunto de datos.
+  balance_classes = TRUE, #La variable objetivo no está balanceada por lo tanto balanceamos las clases.
+  ntrees = 100, #Número de árboles
+  #Evitamos sobre ajuste
+  stopping_tolerance = 0.01, #Porcentaje mínimo de mejora entre dos mediciones consecutivas
+  stopping_rounds=3, #Número de mediciones consecutivas en las que no se debe superar el stopping_tolerance.
+  stopping_metric="AUCPR",
+  distribution = 'bernoulli',
+  learn_rate = 0.001,#Cuanto más pequeño es el valor de learning rate, más lentamente aprende el modelo, se reduce el riesgo de overfitting.
+  huber_alpha = 0.8, #Umbral entre la pérdida cuadrática y lineal.
+  max_depth = 5,
+  sample_rate = 0.75,#Porcentaje de observaciones aleatorias empleadas para el ajuste de cada árbol
+  col_sample_rate = 0.83,
+  set.seed(7)
+)
+
+
+```
+
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+print(modelo13_gbm_grid_es2)
+```
+Con este modelo obtenemos un porcentaje de **'AUCPR'** del **89.48%** en los datos de train y un **98.38%** con los **datos** de **validación**.
+
+Si observamos las métricas obtenidas en la fase de validación cruzada, podemos ver que el **nivel** de **predicción medio** es del **98.30%**, con una **desviación típica** del **0.0004**. Por lo que, el nivel de predicción se **mantiene** en un **98%**. 
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+
+```{r}
+h2o.performance(modelo13_gbm_grid_es2, newdata = test_es2_hex)
+```
+
+Vemos como la precisión del modelo se sitúa en los **datos** de **test** en un  **98.14%** (porcentaje un poco más alto que en train: 89.48%, e igual que en validación: 98.38%), lo que indica que el modelo generaliza bien, aunque es posible que sobre alguna variable.
+
+- **Matriz de confusión.**
+```{r}
+#Obtengo la matriz de confusión en test
+h2o.confusionMatrix(modelo13_gbm_grid_es2, newdata = test_es2_hex, metric = 'accuracy')
+```
+
+Si observamos la matriz de confusión, podemos ver que de los 1143 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 933 (hay 210 falsos positivos), de 37096 que son en realidad atentados exitosos, el modelo reconoce a 33607 (hay 3489 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **90.59%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **81.62%** (Recall - 'No: Especifidad). Un porcentaje **un poco  bajo**.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **86.10%** (Balanced Accuracy: Media de los 'Recall' en las dos clases).
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión del **99.37%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **21%**. Es un porcentaje bajo.
+
+- **Importancia de cada variable.**
+```{r}
+h2o.varimp_plot(modelo13_gbm_grid_es2)
+```
+Las variables más importantes para el modelo son: **'nkill'**, **'attacktype1'** y **'nwound'**, siendo **'nkill'** la **más influyente** con diferencia.
+
+## Algoritmo ‘Random Forest’
+
+Random Forest es un modelo de aprendizaje **supervisado** para **clasificación** (aunque también puede usarse para regresión).
+
+Un modelo Random Forest está **formado** por un **conjunto** (ensemble) de **árboles de decisión individuales**. Esto implica que cada árbol se entrena con unos datos ligeramente distintos. En cada árbol individual, las observaciones se van distribuyendo por bifurcaciones (nodos) generando la estructura del árbol hasta alcanzar un nodo terminal. La **predicción** de una **nueva observación** se obtiene **agregando** las **predicciones** de **todos** los **árboles** individuales que forman el modelo.
+
+- **Ventajas**:
+
+  - Funciona bien, aún sin ajuste de hiperparámetros.
+  
+  - Una de las salidas del modelo es la importancia de variables.
+  
+- **Incovenientes**: 
+
+  - En algunos datos de entrada “particulares” random forest también puede caer en     overfitting.
+
+### Algoritmo 'Random Forest' para el escenario 1
+
+Utilizo los mismos parámetros que los utilizados en el 'GBM'.
+
+```{r message=FALSE, warning=FALSE}
+#Fijo la semilla
+set.seed(7)
+#Entreno el modelo gbm para el escenario 1 con los datos de train
+modelo14_rf_es1 <- h2o.randomForest(
+  x = x_es1,
+  y = y_es1,
+  training_frame = train_es1_hex,
+  validation_frame = valid_es1_hex,
+  nfolds = 5, #Número de campos para la validación cruzada.
+  keep_cross_validation_predictions = TRUE,
+  keep_cross_validation_fold_assignment = TRUE,
+  score_each_iteration = TRUE,
+  score_tree_interval = 5, #Número de árboles tras los que se evalúa el modelo.
+  fold_assignment = 'Modulo', #Forma determinista simple de dividir uniformemente el conjunto de datos.
+  balance_classes = TRUE, #La variable objetivo no está balanceada por lo tanto balanceamos las clases.
+  ntrees = 100, #Número de árboles
+  max_depth = 15, #Profundidad máxima de los árboles(número de nodos)
+  #Evitamos sobre ajuste
+  stopping_tolerance = 0.01, #Porcentaje mínimo de mejora entre dos mediciones consecutivas
+  stopping_rounds=3, #Número de mediciones consecutivas en las que no se debe superar el stopping_tolerance.
+  stopping_metric="AUCPR",
+  distribution = 'bernoulli',
+  sample_rate = 0.8,#Porcentaje de observaciones aleatorias empleadas para el ajuste de cada árbol 
+  seed = 7
+)
+```
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+print(modelo14_rf_es1)
+```
+
+Con este modelo obtenemos un porcentaje de **'AUCPR'** del **94%** en los datos de train y un **98.22%** con los **datos** de **validación**.
+
+Si observamos las métricas obtenidas en la fase de validación cruzada, podemos ver que el **nivel** de **predicción medio** es del **98.18%**, con una **desviación típica** del **0.001**. Por lo que, el nivel de predicción se **mantiene** en un **98%**.
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+
+```{r}
+h2o.performance(modelo14_rf_es1, newdata = test_es1_hex)
+```
+
+
+Vemos como la precisión del modelo se sitúa en los **datos** de **test** en un  **98.29%** (porcentaje un poco más alto que en train: 94%, muy parecido en validación: 98.22), lo que indica que el modelo generaliza bien.
+
+- **Matriz de confusión.**
+```{r}
+#Obtengo la matriz de confusión en test
+h2o.confusionMatrix(modelo14_rf_es1, newdata = test_es1_hex, metric = 'accuracy')
+```
+
+Si observamos la matriz de confusión, podemos ver que de los 2307 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 1785 (hay 522 falsos positivos), de 35932 que son en realidad atentados exitosos, el modelo reconoce a 33295 (hay 2637 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **92.66%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **77.37%** (Recall - 'No: Especifidad). Un porcentaje **bueno**.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **85%** (Balanced Accuracy: Media de los 'Recall' en las dos clases).
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión del **98.45%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **40.36%**. Es un porcentaje todavía bajo.
+
+Con ester modelo, tenemos unas métricas un **poco** por **debajo** respecto a los modelos **'GBM'** sin grid-research.
+
+- **Importancia de cada variable.**
+```{r}
+h2o.varimp_plot(modelo14_rf_es1)
+```
+Las variables más importantes para el modelo son: **'nwound'**, **'nkill'**,  **'attacktype 1'** e **'iyear'**. 
+
+### Algoritmo 'Random Forest' para el escenario 2
+
+Utilizo el mismo algorimo anterior pero con los datos del segundo escenario.
+
+```{r message=FALSE, warning=FALSE}
+#Fijo la semilla
+set.seed(7)
+#Entreno el modelo gbm para el escenario 1 con los datos de train
+modelo15_rf_es2 <- h2o.randomForest(
+  x = x_es2,
+  y = y_es2,
+  training_frame = train_es2_hex,
+  validation_frame = valid_es2_hex,
+  nfolds = 5, #Número de campos para la validación cruzada.
+  keep_cross_validation_predictions = TRUE,
+  keep_cross_validation_fold_assignment = TRUE,
+  score_each_iteration = TRUE,
+  score_tree_interval = 5, #Número de árboles tras los que se evalúa el modelo.
+  fold_assignment = 'Modulo', #Forma determinista simple de dividir uniformemente el conjunto de datos.
+  balance_classes = TRUE, #La variable objetivo no está balanceada por lo tanto balanceamos las clases.
+  ntrees = 100, #Número de árboles
+  max_depth = 15, #Profundidad máxima de los árboles(número de nodos)
+  #Evitamos sobre ajuste
+  stopping_tolerance = 0.01, #Porcentaje mínimo de mejora entre dos mediciones consecutivas
+  stopping_rounds=3, #Número de mediciones consecutivas en las que no se debe superar el stopping_tolerance.
+  stopping_metric="AUCPR",
+  distribution = 'bernoulli',
+  sample_rate = 0.8,#Porcentaje de observaciones aleatorias empleadas para el ajuste de cada árbol 
+  seed = 7
+)
+```
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+print(modelo15_rf_es2)
+```
+
+Con este modelo obtenemos un porcentaje de **'AUCPR'** del **96%** en los datos de train y un **98.55%** con los **datos** de **validación**.
+
+Si observamos las métricas obtenidas en la fase de validación cruzada, podemos ver que el **nivel** de **predicción medio** es del **98.28%**, con una **desviación típica** del **0.0007**. Por lo que, el nivel de predicción se **mantiene** en un **98%**.
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+
+```{r}
+h2o.performance(modelo15_rf_es2, newdata = test_es2_hex)
+```
+
+Vemos como la precisión del modelo se sitúa en los **datos** de **test** en un  **98.37%** (porcentaje parecido a los obtenidos en train y validación), lo que indica que el modelo generaliza bien.
+
+- **Matriz de confusión.**
+```{r}
+#Obtengo la matriz de confusión en test
+h2o.confusionMatrix(modelo15_rf_es2, newdata = test_es2_hex, metric = 'accuracy')
+```
+
+Si observamos la matriz de confusión, podemos ver que de los 2662 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 2016 (hay 646 falsos positivos), de 35577 que son en realidad atentados exitosos, el modelo reconoce a 33171 (hay 2406 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **93.23%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **75.73%** (Recall - 'No: Especifidad). Un porcentaje **bueno**.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **84.48%** (Balanced Accuracy: Media de los 'Recall' en las dos clases).
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión del **98%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **45.59%**. Es un porcentaje todavía bajo.
+
+Son unos valores un **poquito más altos** **que** los alcanzados con el mismo modelo, pero con los datos del **escenario 1**.
+
+
+- **Importancia de cada variable.**
+```{r}
+h2o.varimp_plot(modelo15_rf_es2)
+```
+
+Las variables **más importantes** en este modelo, son: **'nkill'**, **'attacktype1'**, **'nwound'**  e **'iyear'**, siendo 'nkill' la variable más influyente con diferencia.
+
+### Algoritmo 'Random Forest' con grid-research para el escenario 1
+
+Una vez conocidos los hiperparámetros que optimizan el 'AUCPR', los incluiré directamente en el algoritmo, para ahorrar tiempo en computación. 
+
+```{r}
+#Pongo el agoritmo comentado para ahorrar tiempo en ejecución
+#Rangos de los parámetros que busco
+#hyper_params = list(
+ # max_depth = seq(8,14,1),
+  #sample_rate = seq(0.5,1,0.01),
+  #col_sample_rate_per_tree = seq(0.5,1,0.01),
+  #col_sample_rate_change_per_level = seq(1.01,1.9,0.01),
+  #min_split_improvement = c(1e-4, 1e-6, 1e-7)
+#)
+#search_criteria = list(
+ # strategy = "RandomDiscrete",
+  #max_models = 100,
+  #seed = 7,
+  #Evitamos el sobreajuste
+  #stopping_rounds = 3,
+  #stopping_metric = "AUTO",
+  #stopping_tolerance = 0.01) 
+
+#Fijo la semilla
+#set.seed(7)
+#grid_rf_es1 <- h2o.grid(
+ # hyper_params = hyper_params,
+#  search_criteria = search_criteria,
+ # algorithm = "randomForest",
+  #grid_id = "rf_grid_es1",
+  #x = x_es1,
+  #y = y_es1,
+  #training_frame = train_es1_hex,
+  #validation_frame = valid_es1_hex,
+  #nfolds = 5, #Número de campos para la validación cruzada.
+  #keep_cross_validation_predictions = TRUE,
+  #keep_cross_validation_fold_assignment = TRUE,
+  #score_each_iteration = TRUE,
+  #score_tree_interval = 5, #Número de árboles tras los que se evalúa el modelo.
+  #fold_assignment = 'Modulo', #Forma determinista simple de dividir uniformemente    el conjunto de datos.
+  #balance_classes = TRUE, #La variable objetivo no está balanceada por lo tanto      balanceamos las clases.
+  #ntrees = 100, #Número de árboles
+  #stopping_metric = 'AUTO',
+  #seed = 7
+#)
+```
+Selecciono el modelo que ha obtenido un mayor porcentaje de AUCPR:
+
+```{r}
+#rf_grid_ganador_es1 <- h2o.getGrid(grid_id = "rf_grid_es1", 
+ #                            sort_by = "AUCPR", 
+  #                           decreasing = TRUE)
+#print(rf_grid_ganador_es1)
+```
+De los cien modelos que se han generado con los parámetros indicados. Me quedaré con el que ha obtenido mayor valor en aucpr, el modelo rf_grid_es1_model_48, con un 98.23%.
+
+Los mejores hiperparámetros obtenidos son: 
+
+  - col_sample_rate_change_per_level= 1.02,
+
+  - col_sample_rate_per_tree = 	0.84,
+
+  - max_depth = 10,
+
+  - min_split_improvement = 1.0E-4,
+
+  - sample_rate = 0.74
+
+```{r}
+#Me quedo con el modelo de mayor AUCPR
+#modelo16_rf_grid_es1_id <- grid_rf_es1@model_ids[[1]]
+#modelo16_rf_grid_es1 <- h2o.getModel(modelo16_rf_grid_es1_id)
+```
+
+
+```{r}
+#Para ahorrar en tiempo de computación incluiré los hiperparámetros obtenidos en el grid-reseach en el algoritmo directamente.
+#Fijo la semilla
+set.seed(7)
+modelo16_rf_grid_es1 <- h2o.randomForest(
+  x = x_es1,
+  y = y_es1,
+  training_frame = train_es1_hex,
+  validation_frame = valid_es1_hex,
+  nfolds = 5, #Número de campos para la validación cruzada.
+  keep_cross_validation_predictions = TRUE,
+  keep_cross_validation_fold_assignment = TRUE,
+  score_each_iteration = TRUE,
+  score_tree_interval = 5, #Número de árboles tras los que se evalúa el modelo.
+  fold_assignment = 'Modulo', #Forma determinista simple de dividir uniformemente el conjunto de datos.
+  balance_classes = TRUE, #La variable objetivo no está balanceada por lo tanto balanceamos las clases.
+  ntrees = 100, #Número de árboles
+  max_depth = 10, #Profundidad máxima de los árboles(número de nodos)
+  #Evitamos sobre ajuste
+  stopping_tolerance = 0.01, #Porcentaje mínimo de mejora entre dos mediciones consecutivas
+  stopping_rounds=3, #Número de mediciones consecutivas en las que no se debe superar el stopping_tolerance.
+  stopping_metric="AUCPR",
+  distribution = 'bernoulli',
+  sample_rate = 0.74,#Porcentaje de observaciones aleatorias empleadas para el ajuste de cada árbol 
+  col_sample_rate_per_tree = 0.84,
+  col_sample_rate_change_per_level = 1.02,
+  min_split_improvement = 1e-4,
+  seed = 7
+)
+
+```
+
+
+
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+set.seed(7)
+print(modelo16_rf_grid_es1)
+```
+
+Con este modelo obtenemos un porcentaje de **'AUCPR'** del **85.85%** en los datos de train y un **97.99%** con los **datos** de **validación**.
+
+Si observamos las métricas obtenidas en la fase de validación cruzada, podemos ver que el **nivel** de **predicción medio** es del **97.92%**, con una **desviación típica** del **0.001**. Por lo que, el nivel de predicción se **mantiene** en un **97%**.
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+
+```{r}
+set.seed(7)
+h2o.performance(modelo16_rf_grid_es1, newdata = test_es1_hex)
+```
+
+Vemos como la precisión del modelo se sitúa en los **datos** de **test** en un  **97.89%** (porcentaje parecido a los obtenidos validación), lo que indica que el modelo generaliza bien.
+
+- **Matriz de confusión.**
+```{r}
+#Obtengo la matriz de confusión en test
+h2o.confusionMatrix(modelo16_rf_grid_es1, newdata = test_es1_hex, metric = 'accuracy')
+```
+
+Si observamos la matriz de confusión, podemos ver que de los 2244 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 1568 (hay 676 falsos positivos), de 35995 que son en realidad atentados exitosos, el modelo reconoce a 33141 (hay 2854 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **92.07%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **69.87%** (Recall - 'No: Especifidad). Un porcentaje **bueno**.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **80.97%** (Balanced Accuracy: Media de los 'Recall' en las dos clases).
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión del **98%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **35.45%**. Es un porcentaje todavía bajo.
+
+- **Importancia de cada variable.**
+```{r}
+h2o.varimp_plot(modelo16_rf_grid_es1)
+```
+
+Las variables más importantes para el modelo, son: **'nkill'**, **'attacktype1'**, **'nwound'** e **'iyear'**.
+
+### Algoritmo 'Random Forest' con grid-research para el escenario 2
+
+A continuación, utilizaré el mismo algoritmo anterior pero para los datos del escenario 2.
+
+```{r}
+#Fijo la semilla
+set.seed(7)
+modelo17_rf_grid_es2 <- h2o.randomForest(
+  x = x_es2,
+  y = y_es2,
+  training_frame = train_es2_hex,
+  validation_frame = valid_es2_hex,
+  nfolds = 5, #Número de campos para la validación cruzada.
+  keep_cross_validation_predictions = TRUE,
+  keep_cross_validation_fold_assignment = TRUE,
+  score_each_iteration = TRUE,
+  score_tree_interval = 5, #Número de árboles tras los que se evalúa el modelo.
+  fold_assignment = 'Modulo', #Forma determinista simple de dividir uniformemente el conjunto de datos.
+  balance_classes = TRUE, #La variable objetivo no está balanceada por lo tanto balanceamos las clases.
+  ntrees = 100, #Número de árboles
+  max_depth = 10, #Profundidad máxima de los árboles(número de nodos)
+  #Evitamos sobre ajuste
+  stopping_tolerance = 0.01, #Porcentaje mínimo de mejora entre dos mediciones consecutivas
+  stopping_rounds=3, #Número de mediciones consecutivas en las que no se debe superar el stopping_tolerance.
+  stopping_metric="AUCPR",
+  distribution = 'bernoulli',
+  sample_rate = 0.74,#Porcentaje de observaciones aleatorias empleadas para el ajuste de cada árbol 
+  col_sample_rate_per_tree = 0.84,
+  col_sample_rate_change_per_level = 1.02,
+  min_split_improvement = 1e-4,
+  seed = 7
+)
+```
+- **Resultados del modelo.**
+```{r}
+#Imprimimos las métricas del modelo en Train
+print(modelo17_rf_grid_es2)
+```
+Con este modelo obtenemos un porcentaje de **'AUCPR'** del **90.76%** en los datos de train y un **98.63%** con los **datos** de **validación**.
+
+Si observamos las métricas obtenidas en la fase de validación cruzada, podemos ver que el **nivel** de **predicción medio** es del **98.49%**, con una **desviación típica** del **0.0003**. Por lo que, el nivel de predicción se **mantiene** en un **98%**.
+
+- **Evaluación del modelo**
+
+Evaluamos el modelo teniendo en cuenta los datos de test.
+
+```{r}
+h2o.performance(modelo17_rf_grid_es2, newdata = test_es2_hex)
+```
+Vemos como la precisión del modelo se sitúa en los **datos** de **test** en un  **98.44%** (porcentaje parecido a los obtenidos en test y validación), lo que indica que el modelo generaliza bien.
+
+- **Matriz de confusión.**
+```{r}
+#Obtengo la matriz de confusión en test
+h2o.confusionMatrix(modelo17_rf_grid_es2, newdata = test_es2_hex, metric = 'accuracy')
+```
+
+Si observamos la matriz de confusión, podemos ver que de los 3021 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 2141 (hay 880 falsos positivos), de 35218 que son en realidad atentados exitosos, el modelo reconoce a 32937 (hay 2281 falsos negativos). 
+
+Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del **93.52%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo atentados **no exitosos** del **70.87%** (Recall - 'No: Especifidad). Un porcentaje **bueno**.
+
+Esto se ve reflejado en la **capacidad media** de reconocer los casos correctamente , **tanto exitosos** como **no exitosos**, es del **82.19%** (Balanced Accuracy: Media de los 'Recall' en las dos clases).
+
+En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión del **97.39%**. **Y** el nivel de precisión en los casos **no exitosos**, es del **48.41%**. Es un porcentaje todavía bajo. Y  muy parecido al obtenido con los datos del escenario 1.
+
+- **Importancia de cada variable.**
+```{r}
+h2o.varimp_plot(modelo17_rf_grid_es2)
+```
+Las variables más importantes para este modelo son: **'nkill'**, **'attacktype1'**, **'iyear'** y **'nwound'**.
+
+***
+
+# Elección del modelo ganador
+
+Dado que **todos** los modelos generados, tienen una **alta** **capacidad** de **predicción y precisión**, a la hora de **clasificar** los casos de **atentados exitosos**, seleccionaré el **mejor modelo**, entre aquellos cuya capacidad de **clasificar** los **casos no exitosos**, ('Recall: No éxitosos) sea **más alta**. 
+
+Así pues, **descarto** los modelos generados por algoritmos lineales como **'GLM' y 'LDA'**, ya que, no  daban buenos resultados de 'Recall', en este caso. 
+
+El agoritmo **'Ranger'**, lo **descarto** ya que obteníamos un **'Recall'** de **casos no exitosos** del 53%, un porcentaje **más bajo**, **que** en los modelos generados por **'GBM' y 'Random Forest'**.
+
+**Tampoco** cuento con el mejor modelo generado por el **algoritmo 'automl'**, ya que, el mejor **modelo** de este algoritmo fué un **'StackedEnsemble'**. Para este tipo de modelos, **no** es posible **obtener** las **variables más importantes**. Debido a esto, lo descarto, ya que el conocer las variables más influyentes del modelo, es fundamental y objetivo imprescindible para el enfoque de este trabajo y para el área de negocio.
+
+Para elegir el modelo me basaré en la **métrica**, **AUCPR**, que el área bajo la **curva** que relaciona la **capacidad** ('Recall') y la **'Precisión'**. Esta medida es útil cuando las clases estan desbalanceadas.
+
+A continuación, incluyo los modelos candidatos en un gráfico.
+
+```{r}
+#Computo las métricas de cada modelo
+metrica_1 <- h2o.aucpr(modelo10_gbm_es1 )
+metrica_2 <- h2o.aucpr(modelo11_gbm_es2)
+metrica_3 <- h2o.aucpr(modelo12_gbm_grid_es1)
+metrica_4 <- h2o.aucpr(modelo13_gbm_grid_es2)
+metrica_5 <- h2o.aucpr(modelo14_rf_es1)
+metrica_6 <- h2o.aucpr(modelo15_rf_es2)
+metrica_7 <- h2o.aucpr(modelo16_rf_grid_es1)
+metrica_8 <- h2o.aucpr(modelo17_rf_grid_es2)
+
+aucpr <- c(metrica_1,metrica_2, metrica_3, metrica_4, metrica_5, metrica_6, metrica_7, metrica_8)
+modelo <- c("Modelo10", "Modelo11", "Modelo12", "Modelo13", "Modelo14","Modelo15","Modelo16","Modelo17")
+datos <- data.frame(modelo, aucpr)
+#ordeno los datos por 'aucpr'
+x <- datos[order(datos$aucpr), ] 
+#Gráfico de clasificación por 'aucpr'
+dotchart(x$aucpr, labels = x$modelo, pch = 21, bg = "purple")
+
+```
+Gráficamente podemos ver que el **modelo** que tiene un **área mayor bajo la curva entre la 'Precisión' y el 'Recall'** (Capacidad de clasificar correctamente), **es** el **modelo 11** ( modelo11_gbm_es2). Por lo tanto, ese será el mejor modelo predictivo en la clasificación de los atentados.
+
+***
+
+# Conclusiones.
+
+- Tras **limpiar** los **datos**, **entender** la **naturaleza** y **distribución** de las variables que componen el dataset, **y** realizar las **transformaciones** necesarias, tanto para el correcto funcionamiento de los algoritmos, como para la optimización de los resultados, **empecé generando algoritmos** clásicos de la libería caret, como **'GLM'** y **'LDA'**, y no tan clásicos, de la librería H2O, como **'Automl'**, **'GBM'**, **'Radom Forest'** y **'Ranger'** de la librería caret. 
+
+- Analicé el **resultado** de cada modelo, en **dos tipos de escenario**, **uno** con **variables originales** y **otro** con ciertas **variables tramificadas**, con el fin de optimizar el resultado del modelo.
+
+- En todo momento **controlé** que **no** se produjera **overfitting**, mediante **técnicas de regularización**, como incluir en todos los algoritmos ,**'cross validation'**, inlcuso **ajustando** los parámetros de **'max_depth'**, **'Mtry'** y **'nodesize'**. Sobre todo en los algoritmos basados en áboles de decisión, que son más propensos al sobreajuste.
+
+- Dada la **presencia** de **clases desbalanceadas** en el conjunto de datos, también traté esta problemática **en los algoritmos**, **especificando** la **presencia** de clases desbalanceadas en el dataset ('balance_classes = TRUE') **y optimizando** el **'AUCPR'** en lugar del 'Accuracy', en aquellos agoritmos que permiten la utilización de métrica. No opté por modificar el dataset (utilizando Oversampling ó Upsampling), ya que, no suele dar buenos resultados, si incluímos filas podemos caer en overfitting, y si hacemos oversampling, podemos prescindir de muestras  importantes que nos den información.
+
+- Dado que los **modelos predictivos**, tienden a **centrar** su **atención** sobre los casos de la **clase mayoritaria**, éstos **no** han tenido **problemas** en **clasificar** los **atentados exitosos**, asi pues, **he intentado** en todo momento **optimizar** tanto la **capacidad** de clasificación y **precisión** de la **clase minoritaria**, esto es, el que un **atentado** sea **no exitoso**. 
+
+- Para cada algoritmo, tanto ‘GBM’ como ‘Ranger’ó 'Random Forest', **utilicé** un **grid-research** para poder afinar un poco más los parámetros utilizados, con la intención de ir mejorando la capacidad predictiva de los modelos generados. Aún así es **posible**, que con otro tipo de **algoritmos más potentes** se pueda conseguir una **mejor predicción**.
+
+- **Elección del mejor modelo predictivo**
+
+  - A la hora de **elegir** el mejor **modelo**, he tenido en **cuenta dos             características** del modelo clasificador, tanto el **nivel** de **capacidad**     en **clasificar** **correctamente** los casos negativos, es decir, los **casos     no exitosos**, como la **precisión** alcanzada. Es decir, aquel **modelo** cuyo     nivel de **'AUCPR'** sea **mayor**, será el mejor modelo. Siendo el 'AUCPR', el     área bajo la  **curva** que **relaciona** la **capacidad** ('Recall') y la         **'Precisión'**. 
+    
+  - Entre los **posibles** modelos **ganadores**, están aquellos cuya puntuación de     **'Recall'** en los **casos negativos** es **mayor** del **70%** (Nivel            aceptable de capacidad). 
+
+  - A continuación, muestro un **resumen** de las métricas obtenidas en aquellos       **modelos** cuya capacidad de clasificar los casos no exitosos ha sido, por        encima del 70% (**'Recall_no' > 70%**).
+
+```{r}
+#Introduzco las medidas de todos los modelos
+Recall_yes <-c(88.70, 89, 88.68, 88.95, 97.51, 97.41, 99.98, 99.89, 94.35, 97.19, 93.60, 90.53, 90.59, 92.66, 93.23, 92.07, 93.52)
+
+Precision_yes <- c(99.83, 99.72, 99.9, 99.84, 93.97, 93.97, 88.86, 89.41, 97.70, 98.26, 97.70, 99.39, 97.37, 98.45, 98, 98, 97.39)
+
+Recall_no <- c(18.31, 61.38, 0.0, 69.71, 50.98, 50.98, 1, 7, 75.90, 77.73, 75.32, 81.71, 81.62, 77.37, 75.73, 69.87, 70.87)
+
+Precision_no <- c(0.3, 3, 0.0, 2, 72.31, 71.49, 92.94, 89.85, 55.26, 46.26, 48.86,20.51, 21, 40.36, 45.59, 35.45, 48.41 )
+
+#Creo la variable con los nombres de todos los modelos
+modelos <- c('Modelo1_glm_es1', 'Modelo2_glm_es2', 'Modelo3_lda_es1', 'Modelo4_lda_es2','Modelo5_ranger_es1', 'Modelo6_ranger_es2', 'Modelo7_ranger_grid_es1','Modelo8_ranger_grid_es2', 'Modelo9_automl_es2', 'Modelo10_gbm_es1', 'Modelo11_gbm_es2', 'Modelo12_gbm_grid_es1', 'Modelo13_gbm_grid_es2', 'Modelo14_rf_es1', 'Modelo15_rf_es2', 'Modelo16_rf_grid_es1', 'Modelo17_rf_grid_es2')
+
+#Creo el data frame con todas las métricas
+metricas <- data.frame(modelos, Recall_yes, Precision_yes, Recall_no, Precision_no)
+
+#Ordeno el data frame según la Precisión de los casos no exitosos
+metricas_ordenado <- metricas[order(metricas$Precision_no,decreasing = TRUE) , ]
+
+#Muestro aquello cuya capacidad de precisión sea mayor de 70%
+modelos_final <- metricas_ordenado %>%
+    filter(Recall_no > 70) %>%
+    select(modelos,Recall_yes, Precision_yes, Recall_no, Precision_no)
+modelos_final
+```
+
+  - Como podemos ver en esta tabla, el modelo con mayor nivel de 'Precisión' en los     casos negativos, es el **'Modelo9_automl_es2'**, este modelo fué generado por      el algoritmo 'automl', y **es** un **conjunto de modelos ensamblados**. Lo que     significa que **no** se puede **conocer** la **importancia** que tienen las        **variables predictoras** para el modelo de clasificación. Dado que una de las     premisisas del estudio y del área de negocio es conocer, cuáles son los            principales factores que influyen a la hora de clasificar los atentados, **no**     me **quedaré** con **este modelo**.
+
+  - Por lo tanto, el **siguiente modelo** que **alcanza** una **mayor precisión**      en los **casos negativos** es el **'Modelo11_gbm_es2'**, convirtiéndose así en     el **mejor modelo** para predecir **si** un **atentado** se llevará a cabo con     **éxito o fracaso**.
+
+- **Caráterísticas del mejor modelo predictivo: Explicatividad del modelo**
+
+  - Con el **fin** de alcanzar una **mayor optimización** en el ajuste del modelo,     este modelo se **entrenó** con los **datos** del **escenario 2**, es decir,        dataset con las **variables** numéricas: 'nkill', 'nkillter', 'nwound',            'nwoundte', 'npercap', 'iday' e 'imonth', **recategorizadas**. Éste                objetivo se cumplió, ya que se alcanzó un mayor nivel de predicción respecto a     los alcanzados con los datos del escenario 1.
+  
+  - El modelo alcanzó un **nivel de precisión y capacidad de clasificación** en        **train**, del **97.51%**, un nivel de **predicción medio** del **98.58%** en      la fase de **'Cross Validation'** y porcentaje de precisión y capacidad del        **98.28%**, en **test**. Un **porcentaje de clasificación bastante elevado**,      teniendo en cuenta que la **mayor aportación** a este porcentaje es debido a la     **correcta predicción** de los **atentados exitosos**.
+  
+  
+```{r}
+#matriz de confusión del modelo, en test
+h2o.confusionMatrix(modelo11_gbm_es2, newdata = test_es2_hex, metric = 'accuracy')
+```
+
+
+  - Si observamos la matriz de confusión, podemos ver que de los 2869 atentados que     en realidad no son exitosos, el modelo ha sido capaz de reconocer a 2161 (hay      708 falsos positivos), de 35370 que son en realidad atentados exitosos, el         modelo reconoce a 33109 (hay 2261 falsos negativos). 
+
+  - Es decir, tenemos una **capacidad de reconocer** los **atentados exitosos** del     **93.60%** (Recall-'Yes': Sensibildad) y una capacidad de clasificar lo            atentados **no exitosos** del **75.32%** (Recall - 'No: Especifidad). Un           porcentaje **bastante bueno**.
+
+  - Esto se ve reflejado en la **capacidad media** de reconocer los casos              correctamente , **tanto exitosos** como **no exitosos**, es del **84.46%**         (Balanced Accuracy: Media de los 'Recall' en las dos clases).
+
+  - En cuanto a la **'Precisión'** del modelo, es decir, cuanto de confiable es el     modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el      modelo tiene una precisión del **97.90%**. **Y** el nivel de precisión en los      casos **no exitosos**, es del **48.86%**. No es un porcentaje muy alto, aunque     sí es el **mayor** que hemos alcandado, dentro de los modelos potencialmente       válidos.
+
+- **Importancia de cada variable.**
+```{r}
+h2o.varimp_plot(modelo11_gbm_es2)
+```
+
+ - Podemos ver que, las **variables más importantes** a la hora de clasificar los     atentados, por encima del 50% de **son**: el **número de muertos**                 ('nkill_tram'), **el año del atentado** ('iyear'), **el tipo de ataque**           ('attacktype1') **y** el **número de heridos** ('nwound_tram'). Siendo el          **número de muertos**, la variable **la más influyente**, para la clasificación    con diferencia respecto al resto.
+
+  - Debido a que este modelo tiene un buen nivel de predicción, podemos llevarlo a     producción, es decir, pasarle al modelo nuevos valores y que éste nos devuelva     una predicción, en nuestro caso, que nos clasifique el atentado en exitoso o       no.
+
+```{r}
+#Guardo el modelo y los datos de train, validación y test utilizados
+h2o.saveModel(modelo11_gbm_es2, path = "modelo11_gbm_es2_001")
+h2o.save_frame(train_es2_hex, dir = "train_es2_hex")
+h2o.save_frame(test_es2_hex, dir = "test_es2_hex")
+h2o.save_frame(valid_es2_hex, dir = "valid_es2_hex")
+```
+
+
+```{r}
+#Cierro el cluster H2o.
+h2o.shutdown( prompt = FALSE)
+```
+
+
+***

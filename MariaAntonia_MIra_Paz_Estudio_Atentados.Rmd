@@ -1,0 +1,748 @@
+---
+title: "TFM - Predicción sobre el éxito o fracaso de un atentado terrorista"
+author: "Mª Antonia Mira Paz"
+date: "8/22/2021"
+output:
+  html_document:
+    theme: cosmo
+    highlight: tango
+    fig_width: 7
+    fig_height: 6
+    fig_caption: true
+    toc: yes
+    toc_float: yes
+    code_folding: show
+    number_sections: true
+    number_pages: true
+  epuRate::epurate:
+    toc: yes
+    code_folding: hide
+  pdf_document:
+    toc: yes
+    number_sections: true
+    latex_engine: xelatex
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+***
+# **Introducción: Descripción y objetivos del estudio**
+
+![*Atentado de las Torres Gemelas, multitudinaria Diada del año 1977 y el golpe de estado de Chile... todo ello un once de septiembre*](Imagen1.jpg){width=80%}
+
+- Desde 1970 hasta nuestros dias, el **terrorismo** ha tenido una **tendencia creciente**. Después del 11 de septiembre, el terrorismo ha sido materia de riguroso estudio, pues desde entonces el mundo se enfrenta a una amenaza que no tiene un objetivo específico, sino muchos y en todas partes del mundo. 
+
+
+```{r lectura inicial, include=FALSE, message=FALSE, warning=FALSE}
+rm(list = ls())
+install.packages("r package", repos = "http://cran.us.r-project.org")
+suppressPackageStartupMessages({
+  library(data.table)
+  library(dplyr)
+  library(caret)
+  library(scales)
+  library(ggplot2)
+  library(gridExtra)
+  library(stringi)
+  library(stringr)
+  library(dataPreparation)
+  library(knitr)
+  library(kableExtra)
+  library(ggpubr)
+  library(tictoc)
+  library(ggeasy)
+  library(lubridate)
+  library(inspectdf)
+  library(fastDummies)
+  library(e1071)
+  library(MLmetrics)
+  library(ranger)
+  library(caTools)
+  library(h2o)
+  library(questionr)
+  library(corrplot)
+  library(funModeling)
+  library(plotly)
+})
+```
+
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Lectura de los datos
+datIn <- as.data.frame(fread("datos_atentados.csv"), nThread = 2)
+
+#Gráfico de la tendencia de los atentados por año
+plot <- datIn %>%
+  count(iyear) %>%
+  mutate(Year = iyear, Frequency = n) %>%
+  ggplot(aes(Year, Frequency))+
+  geom_line(color = "mediumpurple")+
+  geom_point(color = "mediumpurple")+
+  labs(title = "Frequency of terrorist atacks by year") +
+  theme(legend.position = "none")
+
+ggplotly(plot)
+```
+
+
+- A parte de las irreparables pérdidas humanas, el terrorismo también deja **muchas pérdidas económicas y materiales**. 
+
+- Es por ello, que este estudio puede ser de interés para **conocer los factores** que **más influyen** a la hora de que un **atentado** se **resuelva exitósamente o no**. Entendiendo por **éxito** a los **efectos tangibles** del ataque. No se juzga en término de los objetivos más amplios de los perpretadores. Es decir, si una bomba explota en un edificio se **considerará** un **éxito** incluso **si no logra derribar el edificio**. En caso de que el atentado sea múltiple, será **exitoso si cualquiera de los ataques tienen éxito**. Con **excepción** de los **asesinatos**, que sólo tienen éxito **si** el **objetivo** previsto **muere**.
+
+- Realizaré un **análisis descriptivo** del conjunto de **datos** proporcionados por la Universidad de Maryland, **"Global Terrorism Database (GTD)"**. 
+
+- Encontraré el **mejor modelo**, mediante técnicas de **Machine Learning**, para poder **predecir** si un **atentado** es **exitoso o no exitoso**. 
+
+- Analizaré las **variables más importantes** de dicho modelo.
+
+- Finalmente, pondré el modelo en **producción** para que pueda **devolver** **predicciones** sobre la clasificación de los atentados.
+
+***
+# **Origen de los datos**
+
+Para realizar el estudio, he utilizado los **datos** de **uso público** proporcionados por la Universidad de Maryland, **"Global Terrorism Database (GTD)"**. Dichos datos se pueden **descargar** en la siguiente dirección:
+
+<http://www.start.umd.edu/gtd/access/>
+
+A continuación, muestro el **enlace** dónde obtener el **"GTD Codebook"**, en el que podemos ver toda la información relativa al estudio realizado por la Universidad, en la ardua tarea de recopilación y codificación de todos los datos que componen este dataset. En el documento, también podemos adquirir una **descripción detallada** sobre las **variables** que componen dicha base.
+
+<https://www.start.umd.edu/gtd/downloads/Codebook.pdf>
+
+Cabe destacar que de las 135 variables que componen el dataset, **he descartado variables** que no aportarían nada al estudio que quiero realizar. Éstas son variables con información duplicada y con información adicional que son **irrelevantes** para el caso que nos ocupa.
+
+***
+# **Terrorism Overview** 
+
+Empezaré por hacer una **visión generalizada del Terrorismo Internacional desde 1970 hasta 2018**, que nos ayudará a entender la situación actual del terrorismo y la importancia de este estudio.
+
+Podemos ver, que a lo largo de los años, la **proporción de atentados éxitosos** ha sido **alta** y con una tendencia **estable**, cerca del **90%**. Aunque parece que desde el 2009 la proporción de atentados exitosos tiene una tendencia ligeramente descendiente.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Gráfico de la proporción de atentados exitosos a lo largo de los años
+plot <- datIn %>%
+  mutate(Year = iyear) %>%
+  group_by(Year) %>%
+  summarise(Proportion = mean(success)) %>%
+  ggplot(aes(Year, Proportion)) +
+  geom_line(color = "mediumpurple")+
+  geom_point(color = "mediumpurple")+
+  scale_y_continuous(limits = c(0,1))+
+  labs(title = "Success proportion over time")
+
+ggplotly(plot)
+```
+
+Existe una **mayor tasa de atentados exitosos** en aquellos casos que son perpetrados **con toma de rehenes**, tanto 'kidnapping' como 'Barricade Incident', seguido de los **asaltos armados** y de los **incidentes en infraestructuras** (incendios, sabotajes,..), excluyendo de éstos los ocasionados con explosivos.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Gráfico de la proporción de ataques exitosos 
+plot <- datIn %>%
+  mutate(Type = attacktype1_txt) %>%
+  group_by(Type) %>%
+  summarise(Proportion = mean(success)) %>%
+  ggplot(aes(Type, Proportion))+
+  geom_bar(aes(), stat = "identity", position = "dodge", fill = "mediumpurple")+
+  coord_flip()+
+  labs(title = "Succes rate by Attacktype")
+  
+ggplotly(plot)
+```
+
+Las **víctimas** de los ataques son **principalmente** **civiles y propiedades públicas**: mercados, centros comerciales, etc. Seguidos de **militares**, **cuerpos de seguridad**, **miembros o edificios gubernamentales** y **zonas comerciales**. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Grafico según tipo de víctimas 
+plot <- datIn %>%
+  mutate(Target = reorder(targtype1_txt, rep(1, nrow(datIn)), sum))%>%
+  count(Target) %>%
+  ggplot(aes(Target, n)) +
+  geom_bar(stat = "identity", fill = "mediumpurple")+
+  coord_flip()+
+  labs(title = "Frequency by Target")
+
+ggplotly(plot)
+```
+
+***
+
+# **Análisis descriptivo de los datos**
+
+Después de obtener una visión generalizada del terrorismo, debemos realizar un ánalisis más exahustivo de los datos.
+
+Para obtener **modelos más precisos** es muy **importante** **depurar** las variables predictoras. Así que en esta primera fase, estudiaremos la **naturaleza** de las variables, detectaremos los **datos erróneos** y veremos sus **distribuciones**.
+
+## Naturaleza de las variables
+
+- El dataset contiene inicialmente **191464 registros** y **66 variables**. 
+
+- En una primera inspección, podemos ver que R ha considerado las **variables tipo    factor como numéricas**, por lo que, todas las variables que R ha considerado       erróneamente, debemos transformarlas al tipo correcto. 
+
+- También, existen muchas **variables** con **información duplicada**, son            variables exactamente iguales, unas codificadas como tipo 'factor' y su duplicada   como tipo 'carácter'. Por lo tanto, sólo **dejaré** en el dataset aquellas          variables repetidas que estén codificadas como **factor**.
+
+  *(Ver código en el Anexo I. Sección 1.1)*
+
+## Exploración de los datos
+
+Tras realizar una primera exploración del conjunto de datos, podemos decir que:
+
+- Existe un gran número de **variables** que debemos **eliminar** del dataset por tener **muchos valores perdidos** (superior al 50% de valores), o porque son **variables categóricas** con **muchos niveles**, o incluso porque tienen **un sólo nivel**. *(Ver Anexo I. Sección 1.2.1 y 1.2.4)*
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Lectura de los datos
+datos_ex <- as.data.frame(fread("datos_final.csv"), nThread = 2)
+datos_ex[datos_ex==""] <- NA
+#categorical plot
+x <- inspect_cat(datos_ex)
+show_plot(x)
+```
+
+
+- En el conjunto de datos existen variables con **categorías ‘Unkonwn’**. Por lo      que, **si** los **casos** de estas variables **son importantes** (por encima del    25%), los consideraré como una **categoría más**, por el contrario, si este         porcentaje está por **debajo** del **25%**, **imputaré** estos casos **a            missing**. 
+  *(Ver Análisis en el Anexo I. Sección 1.2.1. apartado A: 'Variables con casos         ‘Unknown’ Codificados')*
+  
+- En cuanto al tratamiento de **datos 'Outliers'**, observo la **existencia** de      **variables con** una incidencia considerable de **valores atípicos** (por encima   del 5%), esta incidencia es **debida** a la gran cantidad de **valores cero o**     valores **negativos** que tienen dichas variables. Por lo tanto, **no** los         **eliminaré**, ni los imputaré, ya que, los **pocos valores que no son cero ó       negativos los considero relevantes**. 
+  El resto de **variables** **con** una **baja incidencia** de Outliers (‘country’ y   ’nattly1') los **pasaré a missing** y posteriormente los **imputaré por             regresión** con el algoritmo missRanger, dicho algoritmo imputa los valores         teniendo en cuenta el resto de las variables.
+  *(Ver 'Análisis de datos 'Outliers'' en el Anexo I. Sección 1.2.6)*
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+source("./Funciones_R.R") #Cargo el archivo de funciones necesarias para este análisis
+#Cargo la liberia necesaria
+library(psych)
+#Muestro la incidencia de outliers de las variables numéricas que no serán elimindas 
+var_numericas_entran <-datos_ex[c(1,2,3,5,6,8,9,23,25,26,31,32,33,34)]
+out <- sapply(Filter(is.numeric, var_numericas_entran),function(x) atipicosAmissing(x)[[2]])/nrow(datos_ex)
+out
+```
+
+- En cuanto a la exploración de las **variables numéricas**, destacar la              **existencia de variables** que, por sus **distribucciones totalmente asimétricas   a la izquierda**, **como númericas** tendrían **poco que aportar**, las             **recategorizo** para **no perder información** y poder captar así mejor las        relaciones no lineales con la variable objetivo. Excepto para la variable           ‘nperps’, que sólo mantendré en el dataset la variable recategorizada, ya que si    dejo la variable original y con valores -99999, hay algoritmos como 'GLM' que       abortarían el proceso de modelización. Para el resto de las variables               recategorizadas, tendré **en cuenta dos escenarios**, **uno**, incluyendo en el     conjunto de datos **sólo** la **variable numérica**, y **otro**, incluyendo sólo    la **variable recategorizada**. Analizando así la bondad del ajuste en cada una de   las situaciones, con el **fin** de poder **optimizar** las **predicciones**.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Histogramas para las variables numéricas
+var_numericas <- datos_ex[c(25,26,31,32,33,34)]
+x <- inspect_num(var_numericas)
+show_plot(x)
+```
+
+  - Aquellas **variables numéricas** con un **pequeño porcentaje de ceros**,            valores **no posibles** en dichas variables por lo que representa la propia         variable, los transformaré en valores perdidos, para posteriormente                 **imputarlos** mediante el **algoritmo ‘missRanger’**.
+    *(Ver 'Análisis de las variables numéricas' en el Anexo I. Sección 1.2.5)*
+  
+  - Los **valores perdidos** que **no superen** el **50%** por variable, serán          **imputados** por **regresión** (algortimo de 'missRanger'). Apuntar que no         existen observaciones con valores perdidos. 
+    *(Ver 'Número de valores perdidos' en el Anexo I. Sección 1.2.4 )*
+  
+  - Variables **categóricas** que tienen **niveles** con un porcentaje menor del 5%     de los casos, es decir, niveles **pocos representativos**, los **agruparé**,        como en el caso de ‘targtype1’ y ‘weaptype1’. 
+  
+  - Incluiré en el dataset **tres nuevas variables**, puede ser **interesante**         **saber** **si** el **trimestre** **o** la **quincena** del mes **son**             variables **influyentes** a la hora de **clasificar un atentado en exitoso o        no** exitoso:
+      
+    - **‘distancia’**: medirá la distancia entre la longitud y la latitud. 
+    
+    - **‘trimestre’**: agrupará la información por trimestres. 
+    
+    - **‘quincena’**: computará los dias de los meses por quincenas.
+
+    Al igual que con las variables recategorizadas, mencionadas anteriormente, estas     tres variables las **analizaré en dos situaciones diferentes**. **Una**, creando     un dataset dónde se incluyan las **variables numéricas originales**, y **otra**,     incluyendo en el conjunto de datos las **nuevas variables categorizadas**. De       esta manera, **podremos analizar** la **aportación** de las nuevas variables        **en** la bondad del ajuste del **modelo**.
+  
+  - **Destacar** la **existencia** de **clases desbalanceadas** en nuestro conjunto     de datos por encima del 85% en una de sus categorías, **incluyendo** la             **variable objetivo**, 'success'. Este es un **handicap**, que deberemos            **tratar** especialmente en la **fase de modelización**, ya que **afecta a los      algoritmos** en su proceso de generalización y **perjudica** especialmente a las     **clases minoritarias**, ya que los algoritmos de Machine Learning siempre          favorecen a la clase mayoritaria. 
+  
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#feature imbalance bar plot
+x <- inspect_imb(datos_ex)
+show_plot(x)
+```
+  
+  
+  - En el gráfico podemos ver como la **variable a predecir** ('success'), tiene un     **porcentaje** elevado de **'Yes'**, alrededor del **88%**. Las técnicas a          utilizar en estos casos, las comentaré en detalle en la fase de Modelización.       
+  
+  *(Ver 'Análisis de desbalanceo' en el Anexo I. Sección 1.2.2 )*
+  
+  - Estudiando las correlaciones entre las variables numéricas, pude comprobar que      no existían correlaciones altas entre ellas (aproximadamente 60%), por lo que,      **no** existirán problemas de **multicolinealidad**. 
+    *(Ver 'Análisis de las correlaciones entre variables numéricas' en el Anexo I       Sección 1.2.7)*
+  
+  - Se puede consultar un resumen más detallado sobre la exploración de los datos,      en el *Anexo I. Sección 1.2.8*
+
+***
+
+# **Feature Enginering**
+
+En esta etapa, realizo todos los **cambios anunciados** en la **fase anterior**.
+
+Es importante tener en cuenta que, estas transformaciones las debemos realizar **sólo** sobre las **variables predictoras**, por lo que, debo **separar** la **variable Objetivo**, 'success', del dataset. Al final de la fase las volveré a unir.
+
+Los cambios que llevo a cabo en esta etapa son los siguientes:
+
+- **Eliminación** de las **variables** epecificadas en EDA.
+
+- **Transformación** de los casos **‘Unknown’** **a missing**, en las variables       cualitativas.
+
+- **Transformación** de los **valores 'raros' a missing**, como en el caso de los     casos menores de cero en nperpcap, y valores cero en ‘imonth’ e ‘iday’.
+
+- **Tratamiento** de los **valores Outliers** mencionados anteriormente.
+
+- **Imputación** de los **'missing'** con 'missRanger'.
+
+- **Recategorización** de las **variables numéricas**.
+
+- Transformación de las variables **categóricas a menos niveles**.
+
+- **Creación** de las **nuevas variables**: distancia, trimestre y quincena.
+
+- **Transformación** de las **variables categóricas a numéricas**. Dado que la        mayoría de los algoritmos utilizados en Machine Learning, sólo pueden leer valores   numéricos, necesitamos transformar las variables cualitativas a numéricas. Existen   muchas **técnicas** para esta labor. Yo he elegido dos de ellas, para las           variables con dos niveles, **One-hot enconding**, que consiste en formar variables   'Dummies'. **Y** para las variables con más de tres niveles, **por sustitución de   la frecuencia**. 
+
+  En el caso de que existan muchas variables con un gran número de niveles, esta      técnica es una buena opción. Pero el problema que hay que tener en cuenta en este   caso, es que, las categorías de las variables no tengan la misma frecuencia, ya     que entonces, tendrían la misma significación. Esta situación no se da en nuestro   dataset, por lo que es lícito realizar esta transformación.
+
+- Al final de esta etapa, es **recomendable** ver la **distribución** de nuestra      **variable objetivo**, para **comprobar** que el **porcentaje de las clases no se     han modificado**.
+
+  - No: 11.32 
+  
+  - Yes: 88.68 
+  
+  Podemos observar que los **porcentajes** **siguen siendo** los **mismos** que       antes de realizar todas las transformaciones.
+
+Una vez realizados todos los cambios y **comprobado** que se han **hecho correctamente**, **creo** los **dataset** que utilizaré tanto en el escenario 1, como en el escenario 2.
+
+  - **Escenario 1**: con las variables **numéricas originales**.
+  
+  - **Escenario 2**: con las variables **numéricas recategorizadas**, incluídas las     **nuevas variables** creadas, 'distancia', 'trimestre' y 'quincena'.
+
+Finalmente, uno las variables predictoras a la variable objetivo en un sólo archivo, y **guardo** los **dataset** para la fase de modelización.
+
+*(Podemos ver el 'Código de toda esta fase' en el Anexo I. Sección 2.)*
+
+***
+
+# **Modelización**
+
+## Objetivos de esta fase
+
+- **Encontrar** el **mejor modelo** capaz de **clasificar** un **atentado** en        exitoso o no exitoso.
+
+- **Crear diferentes modelos** mediante técnicas de Machine Learning, utilizando      **algoritmos de clasificación** tanto de la librería **Caret**, como de la          librería **H2O**.
+
+- **Determinar** el nivel de **predicción** de cada **modelo** analizando los          resultados del mismo.
+
+- Finalmente, **elegir el mejor modelo clasificador** aportando la explicatividad    del modelo y sus características.
+
+## Ventajas e inconvenientes de cada algoritmo.
+
+A continuación, describo las ventajas y deventajas que tiene la utilización de cada uno de los algoritmos que he empleado, con el fin de entender mejor los resultados obtenidos en cada una de las técnicas utilizadas.
+
+### Algoritmo 'GLM'
+
+Éste es uno de los **algoritmos de Machine Learning más simples** y **más utilizados** para la **clasificación de dos clases**. 
+
+- **Ventajas**: 
+  
+  - Es **fácil de implementar e interpretar**.
+  
+  - Se puede usar **como** línea de **base** para cualquier problema de                clasificación binaria.
+  
+  - Un **algoritmo** de **clasificación bastante bueno**, **siempre que** espere       que sus **características** sean **aproximadamente lineales**. 
+  
+  - Da **estimaciones** de qué **variables** son **importantes** en la                 clasificación.
+
+- **Incovenientes**: 
+
+  - Existencia de datos no lineales, se debe hacer un **buen Feature Engineering**     para poder **convertir** fácilmente la mayoría de las **características no         lineales** en **características lineales**.
+  
+  - Con los **valores muy anómalos**, este algoritmo puede **abortar su                ejecución**.
+  
+  - Sufre de **multicolinealidad**.
+  
+  - Necesario **estandarizar** los datos.
+  
+### Algoritmo 'LDA'
+
+El algoritmo linear Discriminat Analysis. Es un **método de clasificación supervisado** de variables cualitativas en el que dos o más grupos son conocidos a priori y nuevas observaciones se clasifican en uno de ellos en función de sus características. Es una **alternativa** al **algoritmo de regresión logística** cuando **existen múltiples clases** en la variable objetivo.
+
+- **Ventajas**: 
+  
+  - **Si** las **clases** están **bien separadas**, los **parámetros estimados**       **en** el modelo de **regresión logística** son **inestables**. En el método de     **LDA** **no sufre este problema**.
+  
+  - **Si** el número de **observaciones** es **bajo** **y** la **distribución** de     los **predictores** es **aproximadamente normal** en cada una de las clases,       **LDA es más estable** que la regresión logística.
+  
+  - Da **estimaciones** de qué **variables** son **importantes** en la                 clasificación.
+
+- **Incovenientes**: 
+
+  - Cada **predictor** debe seguir una **distribución normal** en cada una de sus      clases. **Cuando** la condición de normalidad **no se cumple**, el LDA **pierde     precisión**.
+  
+  - Al igual que en el 'GLM', debemos **escalar** los **datos**.
+  
+### Algoritmo 'Ranger'
+
+Basado en **Random Forest**.
+Este tipo de algoritmos, es una **combinación** de **árboles de precisión**, tal que, cada árbol depende de los valores de un vector aleatorio probado independientemente y con la misma distribución para cada uno de estos.
+
+- **Ventajas**: 
+
+  - Es un algoritmo que **funciona muy bien** en problemas de **clasificación**.
+  
+  - Es **independiente** de las **transformaciones** sobre las **variables**.
+  
+  - **No** es **necesario estandarizar** los datos.
+  
+  - **Captura** muy bien las **interacciones** entre las variables. 
+  
+  - **Eficiente** en **bases** de **datos grandes**.
+  
+  - **Robusto** ante **outliers**.
+  
+  - Da **estimaciones** de qué **variables** son **importantes** en la                 clasificación.
+
+- **Incovenientes**: 
+
+  - **Tendencia** a **sobre-ajustar**, sobre todo si no se regularizan. A veces ,      es **mejor** quedarnos con **menos parámetros**, para no provocar que exista       overfiting.
+ 
+### Algoritmo Automl
+
+Este algoritmo esta basado en el **aprendizaje automático automatizado**. A veces nos puede servir como **modelo base** fijándonos en sus parámetros, para poder utilizarlos en los siguientes algoritmos, con el fin de optimizarlos y así mejorar el nivel de predicción de los siguientes modelos.
+
+- **Ventajas**:
+
+  - **No** necesita una **preparación** exahustiva de las **variables**.
+  
+  - No necesita ajuste sobre los algoritmos, ya que, **proporciona** un **ajuste       automático** de **parámetros** .
+  
+  - Puede servir como **referencia** para **trabajar a partir** de él mirando **sus     parámetros**.
+  
+- **Incovenientes**: 
+
+  - Nos devuelve un **modelo básico** con el que **hay** que trabajar a posteriori     para poder **optimizar** los resultados.
+  
+  - En **ocasiones**, el **mejor modelo** dado por este algoritmo es un **modelo       ensamblado apilado**, formado por un conjunto de algoritmos, por lo que no será     posible **interpretar** la **importancia** de las **variables** dentro del          modelo.
+  
+### Algoritmo ‘GBM’ (Gradient Boosting Machine)
+
+Gradient Boosting Machine (GBM) es una generalización del modelo de Boosting Machine que permite aplicar el **método** de **descenso** de **gradiente** para **optimizar** cualquier **función de coste** durante el ajuste del modelo.
+
+El **valor predicho** por un modelo GBM es la **agregación** de las **predicciones** de **todos** los **modelos** individuales que forman el **ensamble**.
+
+El ensamble se realiza de forma secuencial, de forma que, cada nuevo modelo que se incorpora al conjunto intenta corregir los errores de los anteriores. Como resultado de la combinación de múltiples modelos, Boosting Machine consigue **aprender** **relaciones no lineales** **entre** la variable **respuesta** y los **predictores**.
+
+- **Ventajas**:
+
+  - A menudo proporciona una **precisión** de predicción **insuperable**.
+  
+  - Proporciona **mucha flexibilidad**: se puede optimizar diferentes funciones de     pérdida y proporciona varias opciones de ajuste de hiperparámetros.
+  
+  - **No** se **requiere procesamiento** previo de datos, a menudo funciona muy        bien con valores categóricos y numéricos tal cual.
+  
+- **Incovenientes**: 
+
+  - Los GBM seguirán mejorando para minimizar todos los errores. Esto puede            enfatizar demasiado los valores atípicos y **provocar** un **ajuste excesivo**.     Para ello se debe **utilizar** la **validación cruzada** para neutralizarlo.
+  
+  - A menudo requieren muchos árboles, por lo que necesitarán mucho **tiempo y          memoria**.
+  
+### Algoritmo ‘Random Forest’
+
+Random Forest es un modelo de aprendizaje **supervisado** para **clasificación** (aunque también puede usarse para regresión).
+
+Un modelo Random Forest está **formado** por un **conjunto** (ensemble) de **árboles de decisión individuales**. Esto implica que cada árbol se entrena con unos datos ligeramente distintos. En cada árbol individual, las observaciones se van distribuyendo por bifurcaciones (nodos) generando la estructura del árbol hasta alcanzar un nodo terminal. La **predicción** de una **nueva observación** se obtiene **agregando** las **predicciones** de **todos** los **árboles** individuales que forman el modelo.
+
+- **Ventajas**:
+
+  - Funciona bien, aún sin ajuste de hiperparámetros.
+  
+- **Incovenientes**: 
+
+  - En algunos datos de entrada “particulares” random forest también puede caer en     overfitting.
+
+## Factores a tener en cuenta
+
+- Dada la **presencia** de **clases desbalanceadas** en el conjunto de datos,        **he tratado** esta problemática **en** los **algoritmos**, especificando la        **presencia de clases desbalanceadas** en el dataset (‘balance_classes = TRUE’)     **y** además, **he optimizado** la métrica **‘AUCPR’** en lugar del ‘Accuracy’, en   aquellos algoritmos que permiten su uso. Esta medida calcula el área bajo la curva   que **relaciona** la **capacidad de clasificación** (‘Recall’) **y** la             **‘Precisión’**, en caso de datos no balanceados es una buena métrica.
+
+- **No** he optado por modificar el dataset (utilizando **Oversampling** ó            **Upsampling**), ya que, no suelen dar buenos resultados, si incluímos filas        podemos caer en overfitting, y si hacemos oversampling podemos prescindir de        muestras importantes que nos den información.
+
+- Al no existir ningún problema de clasificación y precisión en los casos exitosos    (mayoritarios), he **analizado** la **bondad del ajuste** de **cada modelo**        teniendo en cuenta los **casos minoritarios** (no exitosos), **intentando** en      todo momento la **optimización** de la **predicción** de los **atentados no         exitosos**, en términos de capacidad y precisión.
+
+- Además debemos **controlar** que **no** se produzca **overfitting**, evitándolo     **mediante técnicas** de **regularización**, como **incluir** en todos los          **algoritmos** **‘cross validation’**, incluso **ajustando** milimétricamente       los **parámetros** de **‘max_depth’**, **‘Mtry’** y **‘nodesize’**. Sobre todo en   los algoritmos basados en áboles de decisión, que son más propensos al              sobreajuste.
+
+- Los **porcentajes** de **predicción** de los modelos tanto en train, como en 
+  test y en validación, **son** bastante **elevados**, sobre todo en los algoritmos   de random forest y GBM (**incluso** añadiendo las **técnicas de regularización**    mencionadas anteriormente). Esto puede **deberse**, **no sólo** al **alto           desbalanceo** de las **variables**, si no **también**, a que exista **alguna**      variable **predictora** con la **misma distribución** **que** la **variable         objetivo**. De **ser así**, deberíamos **eliminarla** de la base de datos. Por lo   tanto, antes de continuar, debemos analizar si existen variables con la misma       distribución que la variable objetivo. En el siguiente punto comento el análisis    realizado al respecto. 
+  
+### Análisis de igualdad de distribución entre las variables predictoras y la target
+
+- En nuestro caso, la variable objetivo es binaria, por lo tanto, para contrastar la   igualdad entre distribuciones, las dos **variables a contrastar** deben de ser      **binarias**. 
+
+- Así pues, los contrastes que he utilizado, para el caso de **variables              dependientes**, ha sido el **test de Mc Nemar**, y para variables                   **independientes** el **test exacto de Fisher**.
+
+- Con dichos contrastes, pude comprobar la **existencia de variables** con la         **misma distribución** **que** la **variable objetivo**. Estas variables las        **eliminé**, tanto del dataset correspondiente al escenario 1 como del dataset      correspondiente al escenario 2.
+
+  *(Ver detalladamente el 'Análisis de igualdad entre las distribuciones de las       variables predictoras y la target' en el Anexo I. Sección 3) *
+
+- Una vez eliminadas las variables, volví a **repetir** los **entrenamientos de los   modelos**, obteniendo los resultados comentados en el siguiente punto.
+
+## Explicatividad de cada modelo
+
+- Después de realizar las correspondientes particiones del dataset en train y test,   para cada uno de los escenarios y para cada una de las librerías utilizadas *(ver   código en el Anexo II. Sección 3, para Caret y Sección 5.1 para H2O)*. **Entreno**   los **modelos** con diferentes algoritmos, tanto clásicos como ‘GLM’ y ‘LDA’, y no   tan clásicos, de la librería H2O, como ‘Automl’, ‘GBM’, ‘Radom Forest’ y ‘Ranger’.
+
+- Para **evaluar** si el modelo generaliza bien y no se produce **sobreajuste**,      utilizo el **nivel de predicción** general, **tanto** en el conjunto de **datos**   de **train**, como en el conjunto de datos de **test**. Esta medida **depende**     del **algoritmo** que estemos empleando, en el caso de los **algoritmos             lineales** como 'GLM', he utilizado el área de la **curva  ROC**, en el caso de     **'LDA' y 'Ranger'**, el nivel de **Accuracy**, y en el **resto de algoritmos**,    he empleado el **'AUCPR'**. En **ninguno** de los casos se produce                  **Overfitting**, ya que, el nivel de predicción tanto en test como en train         alcanzan niveles muy parecidos, incluso a veces un poquito más, lo que nos indica   que quizás 'sobre' alguna variable del modelo.
+
+- **Dado** el problema de **'datos desbalanceados'** que tenemos, para analizar los   **niveles de predicción (efectividad)** de cada unos de los modelos, **no           sólo** tengo en cuenta el nivel de predicción de la clase mayoritaria, es           decir, en los **casos exitosos**, sino **también** la **efectividad** en los        **casos no exitosos**. Esta **efectividad** la mido **en términos** de              **capacidad** de clasificación **y** de **precisión**. Así pues, en todos los       casos, analizo tanto la capacidad que tiene el modelo para clasificar la clase      correctamente ('Recall'), como el nivel de precisión del modelo ('Precisión'), es   decir, cuanto de confiable es el modelo en clasificar correctamente la clase.
+
+Así pues, los modelos los podemos diferenciar en **dos grupos**: aquellos cuya **capacidad de clasificación** en los casos no exitosos, ha sido **menor del 70%** (Grupo 1), un nivel de clasificación no aceptable, ya que es bastante bajo, y aquellos cuya **capacidad de clasificación** de los casos no exitosos, ha sido **mayor** del **70%**(porcentaje de clasificación aceptable) (Grupo 2).
+
+  1.- **Grupo 1** ('Recall_No' <= 70%)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Tabla resumen de los modelos librería 'Caret'
+#Introduzco las medidas de todos los modelos
+Recall_yes <-c(88.70, 89, 88.68, 88.95, 97.51, 97.41, 99.98, 99.89, 94.35, 93.32, 93.60, 90.53, 90.59, 92.66, 93.23, 92.07, 93.52)
+
+Precision_yes <- c(99.83, 99.72, 99.9, 99.84, 93.97, 93.97, 88.86, 89.41, 97.70, 98.26, 97.90, 99.39, 97.37, 98.45, 98, 98, 97.39)
+
+Recall_no <- c(18.31, 61.38, 0.0, 69.71, 50.98, 50.98, 1, 7, 75.90, 77.73, 75.32, 81.71, 81.62, 77.37, 75.73, 69.87, 70.87)
+
+Precision_no <- c(0.3, 3, 0.0, 2, 72.31, 71.49, 92.94, 89.85, 55.26, 46.26, 48.86,20.51, 21, 40.36, 45.59, 35.45, 48.41 )
+
+#Creo la variable con los nombres de todos los modelos
+modelos <- c('Modelo1_glm_es1', 'Modelo2_glm_es2', 'Modelo3_lda_es1', 'Modelo4_lda_es2','Modelo5_ranger_es1', 'Modelo6_ranger_es2', 'Modelo7_ranger_grid_es1','Modelo8_ranger_grid_es2', 'Modelo9_automl', 'Modelo10_gbm_es1', 'Modelo11_gbm_es2', 'Modelo12_gbm_grid_es1', 'Modelo13_gbm_grid_es2', 'Modelo14_rf_es1', 'Modelo15_rf_es2', 'Modelo16_rf_grid_es1', 'Modelo17_rf_grid_es2')
+
+#Creo el data frame con todas las métricas
+metricas <- data.frame(modelos, Recall_yes, Precision_yes, Recall_no, Precision_no)
+
+#Ordeno el data frame según la Precisión de los casos no exitosos
+metricas_ordenado <- metricas[order(metricas$Precision_no,decreasing = TRUE) , ]
+
+#Muestro aquello cuya capacidad de precisión sea mayor de 70%
+modelos_caret <- metricas_ordenado %>%
+    filter(Recall_no <= 70) %>%
+    select(modelos,Recall_yes, Precision_yes, Recall_no, Precision_no)
+knitr::kable(modelos_caret, caption = 'Modelos con capacidad de predicción menor del 70% en casos no exitosos')
+```
+
+
+
+- Podemos ver como **ninguno** de los modelos tiene **problemas** en **clasificar** **correctamente** los **atentados exitosos**, es decir, tienen una capacidad de predicción (**'Recall_Yes'**) bastante **alta**, porcentajes por encima del 80%, y **además**, cuando los clasifica correctamente, lo hacen de una manera **altamente confiable**, es decir, con una **'Precisión_Yes' alta**, por encima también del 80%.
+
+- **Sin embargo**, a la hora de predecir los **casos no exitosos**, la capacidad de clasificación alcanza niveles bastantante bajos, todos por debajo del 70%, por lo que éstos, son **modelos** que **no** son capaces de **clasificar** los **casos negativos correctamente**. 
+
+- El **peor modelo**, es el generado por el algoritmo 'LDA' (**Modelo3_lda_es1**), tiene capacidad nula de predicción en cuanto a los atentandos no exitosos. Esto era de prever, ya que, este **tipo** de **algoritmos** **pierden predicción**, cuando las variables predictoras **no** siguen una **distribución Normal**.
+
+- En el caso del algoritmo **'GLM'**, estos **no** dan **buenos resultados** si las **variables predictoras** **no** siguen una **distribución lineal** **con** la **variable objetivo**, en nuestro caso podemos ver como alcanzan niveles de 'Recall_No' y 'Precisión_No' bastantes bajos, por lo que ésta puede ser una de las causas del malo nivel de predicción.
+
+- El **resto** de modelos: Modelo5_ranger_es1, Modelo6_ranger_es2 y Modelo16_rf_grid_es1, generados tanto por algoritmos 'Ranger' como 'Random Forest', alcanzan un nivel de precisión y capacidad de casos negativos mayor, aunque por debajo del 70%. Estos tipos de **algoritmos** funcionan muy **bien** en temas de **clasificación**, aunque en nuestro caso no han alcanzado buenos niveles de predicción.
+
+*(Ver el 'Análisis detallado de cada unos de los modelos' en el Anexo II:* 
+
+- *Sección 4.1.1:'Modelo1_glm_es1'.*
+
+- *Sección 4.1.2: 'Modelo2_glm_es2'.*
+    
+- *Sección 4.2.1: 'Modelo3_lda_es1'.*
+
+- *Sección 4.2.2: 'Modelo4_lda_es2'.*
+    
+- *Sección 4.3.1: 'Modelo5_ranger_es1'.*
+
+- *Sección 4.3.2: 'Modelo6_ranger_es2'.* 
+
+- *Sección 4.3.3: 'Modelo7_ranger_grid_es1'.* 
+
+- *Sección 4.3.4:'Modelo8_ranger_grid_es2'.* 
+   
+- *Sección 5.4.3: Modelo16_rf_grid_es1).*
+
+  2.- **Grupo 2** ('Recall_No' > 70%)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Introduzco las medidas de todos los modelos
+Recall_yes <-c(88.70, 89, 88.68, 88.95, 97.51, 97.41, 99.98, 99.89, 94.35, 93.32, 93.60, 90.53, 90.59, 92.66, 93.23, 92.07, 93.52)
+
+Precision_yes <- c(99.83, 99.72, 99.9, 99.84, 93.97, 93.97, 88.86, 89.41, 97.70, 98.26, 97.90, 99.39, 97.37, 98.45, 98, 98, 97.39)
+
+Recall_no <- c(18.31, 61.38, 0.0, 69.71, 50.98, 50.98, 1, 7, 75.90, 77.73, 75.32, 81.71, 81.62, 77.37, 75.73, 69.87, 70.87)
+
+Precision_no <- c(0.3, 3, 0.0, 2, 72.31, 71.49, 92.94, 89.85, 55.26, 46.26, 48.86,20.51, 21, 40.36, 45.59, 35.45, 48.41 )
+
+#Creo la variable con los nombres de todos los modelos
+modelos <- c('Modelo1_glm_es1', 'Modelo2_glm_es2', 'Modelo3_lda_es1', 'Modelo4_lda_es2','Modelo5_ranger_es1', 'Modelo6_ranger_es2', 'Modelo7_ranger_grid_es1','Modelo8_ranger_grid_es2', 'Modelo9_automl', 'Modelo10_gbm_es1', 'Modelo11_gbm_es2', 'Modelo12_gbm_grid_es1', 'Modelo13_gbm_grid_es2', 'Modelo14_rf_es1', 'Modelo15_rf_es2', 'Modelo16_rf_grid_es1', 'Modelo17_rf_grid_es2')
+
+#Creo el data frame con todas las métricas
+metricas <- data.frame(modelos, Recall_yes, Precision_yes, Recall_no, Precision_no)
+
+#Ordeno el data frame según la Precisión de los casos no exitosos
+metricas_ordenado <- metricas[order(metricas$Precision_no,decreasing = TRUE) , ]
+
+#Muestro aquello cuya capacidad de precisión sea mayor de 70%
+modelos_final <- metricas_ordenado %>%
+    filter(Recall_no > 70) %>%
+    select(modelos,Recall_yes, Precision_yes, Recall_no, Precision_no)
+knitr::kable(modelos_final, caption = 'Modelos con capacidad de predicción mayor del 70% en casos no exitosos')
+```
+
+
+
+- Vemos como los **modelos** con **mejor nivel de predicción**, son los **generados** con **algoritmos no clásicos** **basados** en **árboles de clasificación**, como **'GBM'**, **'Random Forest'** y **'Automl'**. 
+
+- Al igual que ocurría en el Grupo 1, los modelos **no** tienen **problemas** en **predecir** los **casos exitosos**, la capacidad y la precisión de clasificación en estos casos son bastante elevados (por **encima** del **90%**).
+
+- El **modelo** que alcanza un **mayor nivel de predicción**, tanto en capacidad y precisión de **casos no exitosos**, es el **Modelo9_automl**. Tiene una capacidad de clasificación de atentados no exitosos del 75.90%, y un nivel de precisión en estos del 55.26%. Este modelo está generado por el algoritmo 'Automl', es un **modelo Ensamblado**, es decir, **formado** por un conjunto de algoritmos, en este caso, **por** algortimos **‘GBM’, ‘DRF’ y ‘GLM’**. El **problema** de este tipo de modelos es la **interpretabilidad** del modelo, es decir, **no** podemos **analizar** los **factores** ó variables más inluyentes en el modelo.
+
+- Los **siguientes modelos** que toman un **nivel de predicción aceptables**, con una capacidad de clasificación por encima del 70% y un nivel de precisión más alta (alrededor del 50%), son el **Modelo11_gbm_es2** y el **Modelo17_rf_grid_es2**, ambos **generados** por los algoritmos **'GBM'** y **'Random Forest'**, puntualizar que ambos están entrenados con las **variables del escenario 2**. 
+
+- Los **modelos** que alcanzan un **peor nivel de predicción**, son aquellos cuya precisión ('Precisión_No') es bastante baja, por **debajo** del **45%**. Estos son modelos generados por algoritmos como **'Random Forest' con datos del escenario 1** y **'GBM con búsqueda de parámetros'** (Modelo14_rf_es1, Modelo13_gbm_grid_es2, Modelo12_gbm_grid_es1).
+
+- Podemos observar que todos los **modelos** que han sido **entrenados y evaluados** con los **datos del escenario 2**, han alcanzado **mayores valores de predicción**, por lo que, me conduce a pensar que las variables que sólo forman parte de este dataset y no del otro, como son las **variables numéricas recategorizadas** y las **nuevas variables** **aportan** mayor **variabilidad** (información) a los modelos, optimizando así la predicción de los mismos.
+
+*(Ver el 'Análisis detallado de cada unos de los modelos' en el Anexo II:* 
+
+- *Sección 5.2:'Modelo9_automl'.*
+    
+- *Sección 5.3.1:'Modelo10_gbm_es1'.*
+
+- *Sección 5.3.2: 'Modelo11_gbm_es2'.*
+
+- *Sección 5.3.3: 'Modelo12_gbm_grid_es1'.*
+
+- *Sección 5.3.4: 'Modelo13_gbm_grid_es2'.*
+    
+- *Sección 5.4.1:'Modelo14_rf_es1'*
+
+- *Sección 5.4.2:'Modelo15_rf_es2'*
+   
+- *Sección 5.4.4: 'Modelo17_rf_grid_es2')*
+
+## Elección del mejor modelo clasificador
+
+- Descarto los modelos cuya capacidad de clasificación de los atentados no exitosos ('Recall_No') es menor del 70%. Tampoco tengo en cuenta el 'Modelo9_automl', ya que, como comenté anteriormente, no es posible obtener las variables más importantes de este modelo. Algo que es fundamental y objetivo imprescindible para el enfoque de este trabajo y para el área de negocio. Por lo tanto, **elegiré** el modelo ganador teniendo **en** cuenta aquellos **modelos** que pertencen al **grupo 2** (Modelos con 'Recall_No' > 70%). Es decir, entre aquellos cuya **capacidad de clasificar** los **casos no exitosos**, (’Recall: No éxitosos) sea **más alta**.
+
+- Para elegir el modelo predictivo, **me basaré en** la métrica, **AUCPR**, que mide el **área bajo la curva que relaciona la capacidad (‘Recall’) y la ‘Precisión’**. Esta medida es **útil** cuando las **clases estan desbalanceadas**.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, out.width="80%"}
+knitr::include_graphics("grafico_modelos.png")
+```
+
+*(Ver 'Código del gráfico' en el Anexo II. Sección 6)*
+
+Gráficamente podemos ver, que el modelo con el **área mayor bajo la curva que relaciona la ‘Precisión’ y el ‘Recall’** (AUCPR), es el modelo 11 ( **'modelo11_gbm_es2'**). Por lo tanto, ese **será** el **mejor modelo predictivo en la clasificación de los atentados**.
+
+Como veíamos en la tabla del grupo 2, este **modelo** era el que **mayor capacidad de clasificación** ('Recall_no': **75.90%**) y **precisión** ('Precision_no': **48.86%**) tenía **en** los **casos negativos**, sin contar con el modelo 9 (generado por 'Automl'). 
+
+## Características del mejor modelo predictivo: Explicatividad del modelo
+
+Podemos ver el código utilizado para generar el modelo predictivo elegido:
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, out.width="80%"}
+#Código del modelo predictivo elegido
+knitr::include_graphics("codigo_modelo.png")
+```
+
+
+### Evaluación del modelo ganador
+
+- Con el fin de alcanzar una mayor optimización en el ajuste del modelo, este modelo se **entrenó** con los **datos** del **escenario 2**, es decir, dataset con las variables numéricas: ‘nkill’, ‘nkillter’, ‘nwound’, ‘nwoundte’, ‘npercap’, ‘iday’ e ‘imonth’, recategorizadas, incluyendo también las nuevas variables, 'distancia', 'quincena' y 'trimestre'. Este objetivo se cumplió, ya que se alcanzó un **mayor nivel** de **predicción** **respecto** a los alcanzados con los **datos del escenario 1**.
+
+- El modelo alcanzó un nivel de **precisión y capacidad de clasificación** en **train**, del **97.51%**, un nivel de predicción medio del 98.58%, con una desviación típica del 0.0001, en la fase de ‘Cross Validation’. Y un porcentaje de precisión y capacidad del **98.28%**, **en test**. Por lo tanto, vemos como el modelo **generaliza correctamente**, ya que el nivel de predicción en test y train es muy parecido, **y** además vemos que **no** se está produciendo **sobreajuste**, ya que se mantiene en torno al 98%, no hay diferencias significativas en este porcentaje en train, test y validación.
+
+- Un porcentaje de clasificación bastante elevado, teniendo en cuenta que la **mayor aportación** a este porcentaje es debido a la **correcta predicción** de los **atentados exitosos**. 
+
+*(Ver 'Código y salidas de las métricas de evalución del modelo' en el Anexo II. Sección 5.3.2)*
+
+### Matriz de confusión del modelo
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, out.width="100%"}
+#Matriz de confusión del modelo elegido 
+knitr::include_graphics("matriz_confusion.png")
+```
+
+*(Ver código de la 'matriz de confusión' en Anexo II. Sección 5.3.2 ó en las 'Conclusiones' del Anexo II. Sección 7)*
+
+- Si observamos la matriz de confusión, podemos ver que de los 2869 atentados que en realidad no son exitosos, el modelo ha sido capaz de reconocer a 2161 (hay 708 falsos positivos), de 35370 que son en realidad atentados exitosos, el modelo reconoce a 33109 (hay 2261 falsos negativos).
+
+- Es decir, tenemos una **capacidad de reconocer los atentados exitosos** del **93.60%** (Recall-‘Yes’: Sensibildad) y una capacidad de clasificar lo **atentados no exitosos** del **75.32%** (Recall - ’No: Especifidad). Un porcentaje bastante bueno.
+
+- Esto se ve reflejado en la capacidad media de reconocer los casos correctamente , tanto exitosos como no exitosos, es del 84.46% (Balanced Accuracy: Media de los ‘Recall’ en las dos clases).
+
+- En cuanto a la **‘Precisión’** del modelo, es decir, cuanto de confiable es el modelo en clasificar correctamente, tenemos que en los **casos exitosos**, el modelo tiene una precisión del **97.90%**. Y el nivel de precisión en los **casos no exitosos**, es del **48.86%**. **No** es un porcentaje **muy alto**, **aunque** sí es el **mayor que hemos alcanzado**, dentro de los modelos potencialmente válidos.
+
+### Importancia de las variables predictoras
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, out.width="85%"}
+#Gráfico variables más importantes 
+knitr::include_graphics("grafico_variables_importantes.png")
+```
+
+Las variables más importantes a la hora de clasificar los atentados, con una importancia por encima del 50% son: el **número de muertos** (‘nkill_tram’), el **año** del atentado (‘iyear’), el **tipo de ataque** (‘attacktype1’) y el **número de heridos** (‘nwound_tram’). Siendo el **número de muertos**, la variable la **más influyente**, para la clasificación **con diferencia** respecto al resto. 
+
+Además debo puntualizar que las variables nuevas, 'quincena' y 'trimestre', no son variables influyentes en el modelo. Esto nos indica que **da igual la quincena del mes ó el trimestre del año**, en que se cometa el atentado, esta información **no influirá** de manera **notable** a la hora de **clasificar** un **atentado** en exitoso o no. 
+
+*(Ver 'Código del gráfico de las variables más importantes' Anexo I. Sección 5.3.2 ó Sección 7)*
+
+***
+
+# **Productivización**
+
+En esta fase productivizaremos el modelo, es decir, lo pondremos en valor. Pasaremos **nuevos valores a las variables predictoras** y el **modelo nos devolverá una predicción**.
+
+## Plumber
+
+- En esta fase mediante la librería de ‘Plumber’ **creo el API** dónde realizaré la **llamada** al **modelo**, para que al **incluir** los **nuevos valores** de las variables predictoras, el modelo nos **devuelva** la **predicción**, en nuestro caso, si un **atentado es éxitoso o no**.
+
+- En primer lugar, **creo el API**, le pongo nombre a la API e indico una **pequeña descripción** de lo que **hace el modelo**. Toda esta información, aparecerá en el API.
+
+- A continuación, **incluyo** una serie de **filtros** para dar **información adicional** sobre la llamada del **API**, inluyendo **características** y **versiones del sistema**.
+
+- Después **defino** todos los **parámetros** que **necesita** el **modelo** para realizar la **predicción**. Para ello, debemos tener **en cuenta** la **codificación** actual de las variables.
+
+- También debo **definir** la **función de predicción**. Incluyendo **filtros** para comprobar que los **datos** que se introduzcan sean los **correctos**.
+
+## To run in console
+
+- En esta fase envolvemos el fichero con Pumbler y realizamos la llamada desde la consola.
+
+- Escribo los datos que le pasaremos a la función de predicción, en formato JSON, y los valores deben tener el mismo formato con el que el modelo entrenó. Los datos los podemos incluir directamente en el API.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+knitr::include_graphics("Frontal_API.png")
+```
+
+- O podemos realizar la llamada desde la terminal con la llamada  'curl':
+
+#-------------------------
+# Run in Terminal
+curl -X GET "http://127.0.0.1:8000/h2o.predict?iyear=1970&country=650&region=12&natlty1=650&fe_distancia=190&fe_fe_vicinity=1&fe_INT_LOG=97036&fe_INT_IDEO=24556&fe_INT_ANY=88017&fe_fe_attacktype1=1104&fe_fe_nperps_tram=18400&fe_fe_nperpcap_tram=143129&fe_fe_nkill_tram=97174&fe_fe_nkillter_tram=163210&fe_fe_nwound_tram=117266&fe_fe_nwoundte_tram=184089&fe_fe_targtype1_retram=22542&fe_fe_weaptype1_retram=98505&fe_fe_trimestre=46480&fe_fe_quincena=96018" -H "accept: */*"
+
+De esta manera, con los datos que le proporcionamos al **modelo**, este **nos devolvería** una **predicción** sobre el **tipo de atentado** que tenemos, **exitoso o no exitoso**.
+
+*(Ver 'Código' en Anexo III. Sección 2 y 3).*
+
+***
+
+# **Conlusiones**
+
+- Tras **limpiar** los **datos**, **entender** la **naturaleza**, **distribución de las variables** que componen el dataset, y realizar las transformaciones necesarias, tanto para el correcto funcionamiento de los algoritmos, como para la optimización de los resultados, **entrené** **diferentes modelos** generados por distintos algoritmos, tanto clásicos como modernos. 
+
+- Los **modelos** que **obtuvieron** un **mejor resultado** de clasificación fueron aquellos **generados** por **algoritmos** más **recientes** como **'automl'** ó **'GBM'** y que además, fueron **entrenados** con el conjunto de datos del segundo escenario, es decir, el dataset con alguna de las **variables numéricas recategorizadas**.
+
+- Dada la **presencia de clases desbalanceadas** en el dataset, tuve que **tratar** esta **problemática**, no sólo **en** los propios **algoritmos**, sino a la hora de **evaluar** el modelo. Debí **centrarme** en la **clasificación** de los **casos minoritarios**, ya que, en los mayoritarios el modelo no tenía problema en clasificarlos correctamente.
+
+- Después de entrenar todos los modelos, pude generar un **modelo** que conseguía **clasificar correctamente** los **atentados no éxitosos** en un **75%** y con una **precisión del 50%** aproximadamente. **Capacidad** y **precisión** de clasificación **más alta** obtenida por ahora. 
+
+- Es **posible** que **ajustando** los **hiperparámetros** de los algoritmos un **poco más**, alcancemos un **nivel de predicción** un poco **mayor**. Incluso utilizando **algoritmos** más **potentes** tipo **XGBoost**, y algoritmos **ensamblados**. Teniendo en cuenta que **éstos últimos** **sólo** nos valdrían para **clasificar** los casos, no podríamos estudiar sus factores más influyentes en la clasificación, ni la aportación de cada uno en dicha clasificación.
+
+- Posteriormente, se podría **analizar** **si** **todas** las **variables predictivas** **son imprescindibles** para el modelo, quizás si eliminamos alguna de las variables menos significativas, es posible que alcancemos un mayor nivel de predicción.
+
+- Conocemos los **factores más influyentes** a la hora de clasificar los atentados, éstos son: el **número de muertos**, el **año**, el **tipo de ataque** y el **número de heridos**. Siendo el **número de muertos**, la variable la **más importante**, para la clasificación **con diferencia** respecto al resto.
+
+- Una vez que **conocemos** cuáles son los **factores** que **más influyen** **en** el **éxito o fracaso** de un atentado, y **analizamos más detenidamente estás variables** quizás podremos **intentar evitar** que los incidentes **se resuelvan de forma exitosa**.
+
+- Como un posible **estudio posterior**, y dado que el año es un factor influyente,  recomendaría realizar un **modelo predictivo** capaz de devolvernos el **número de  atentados posibles en los próximos años**.
+
+***
+
+# **Enlace código fuente y video resumen**
+
+La dirección del repositorio dónde estás todos los códigos fuentes utilizados, es la siguiente: 
+
+
+En enlace del video es el siguiente: 
+
+
+
+***
+
